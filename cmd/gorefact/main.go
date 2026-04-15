@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 
@@ -17,7 +18,6 @@ import (
 	"go.flaticols.dev/gorefactor/internal/rules"
 )
 
-const version = "0.1.0"
 const defaultRulesFile = "gorefact.rules.toml"
 
 func main() {
@@ -26,22 +26,24 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		printUsage(stderr)
+		printRootHelp(stderr)
 		return 2
 	}
 
 	switch args[0] {
+	case "help", "-h", "--help":
+		return runHelp(args[1:], stdout, stderr)
 	case "check":
 		return runCheck(args[1:], stdout, stderr)
 	case "serve":
 		return runServe(args[1:], stdout, stderr)
 	case "version":
-		return runVersion(stdout)
+		return runVersion(args[1:], stdout, stderr)
 	case "validate-rules":
 		return runValidateRules(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown subcommand %q\n\n", args[0])
-		printUsage(stderr)
+		printRootHelp(stderr)
 		return 2
 	}
 }
@@ -49,6 +51,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 func runCheck(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		printCheckHelp(fs.Output())
+		printFlagDefaults(fs)
+	}
 
 	var (
 		rulesPath = fs.String("rules", defaultRulesFile, "path to gorefact.rules.toml")
@@ -59,6 +65,9 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	)
 
 	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
 		return 2
 	}
 	resolvedRulesPath := resolvePath(*dir, *rulesPath)
@@ -116,6 +125,10 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 func runServe(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		printServeHelp(fs.Output())
+		printFlagDefaults(fs)
+	}
 
 	var (
 		rulesPath = fs.String("rules", defaultRulesFile, "path to gorefact.rules.toml")
@@ -125,6 +138,9 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	)
 
 	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
 		return 2
 	}
 	resolvedRulesPath := resolvePath(*dir, *rulesPath)
@@ -171,17 +187,35 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func runVersion(stdout io.Writer) int {
-	_, _ = fmt.Fprintf(stdout, "gorefact %s\n", version)
+func runVersion(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 {
+		switch strings.TrimSpace(args[0]) {
+		case "-h", "--help", "help":
+			printVersionHelp(stdout)
+			return 0
+		default:
+			fmt.Fprintf(stderr, "version does not accept arguments: %s\n\n", strings.Join(args, " "))
+			printVersionHelp(stderr)
+			return 2
+		}
+	}
+	_, _ = fmt.Fprintf(stdout, "gorefact %s\n", version())
 	return 0
 }
 
 func runValidateRules(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("validate-rules", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		printValidateRulesHelp(fs.Output())
+		printFlagDefaults(fs)
+	}
 
 	rulesPath := fs.String("rules", defaultRulesFile, "path to gorefact.rules.toml")
 	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
 		return 2
 	}
 	ruleSet, err := rules.Parse(*rulesPath)
@@ -193,12 +227,115 @@ func runValidateRules(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: gorefact <check|serve|version|validate-rules> [flags] [packages...]")
-	fmt.Fprintln(w, "  check  run dependency violation checks")
-	fmt.Fprintln(w, "  serve  start the JSON-RPC server")
-	fmt.Fprintln(w, "  version  print the gorefact version")
-	fmt.Fprintln(w, "  validate-rules  parse and validate a rules file")
+func runHelp(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		printRootHelp(stdout)
+		return 0
+	}
+	if len(args) > 1 {
+		fmt.Fprintf(stderr, "help accepts at most one topic\n\n")
+		printRootHelp(stderr)
+		return 2
+	}
+	switch strings.TrimSpace(args[0]) {
+	case "check":
+		printCheckHelp(stdout)
+		return 0
+	case "serve":
+		printServeHelp(stdout)
+		return 0
+	case "version":
+		printVersionHelp(stdout)
+		return 0
+	case "validate-rules":
+		printValidateRulesHelp(stdout)
+		return 0
+	default:
+		fmt.Fprintf(stderr, "unknown help topic %q\n\n", args[0])
+		printRootHelp(stderr)
+		return 2
+	}
+}
+
+func printRootHelp(w io.Writer) {
+	fmt.Fprintln(w, "gorefact inspects Go package dependencies and reports architectural violations.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintln(w, "  gorefact <command> [flags] [packages...]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Commands:")
+	fmt.Fprintln(w, "  check           build the graph and report rule violations")
+	fmt.Fprintln(w, "  serve           start the JSON-RPC server for the Neovim plugin")
+	fmt.Fprintln(w, "  validate-rules  parse and validate a rules file without loading packages")
+	fmt.Fprintln(w, "  version         print the gorefact version")
+	fmt.Fprintln(w, "  help            show general or command-specific help")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Examples:")
+	fmt.Fprintln(w, "  gorefact check ./...")
+	fmt.Fprintln(w, "  gorefact check --format json --dir . ./...")
+	fmt.Fprintln(w, "  gorefact serve --rules gorefact.rules.toml ./...")
+	fmt.Fprintln(w, "  gorefact help check")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Run `gorefact help <command>` or `gorefact <command> -h` for details.")
+}
+
+func printCheckHelp(w io.Writer) {
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintln(w, "  gorefact check [flags] [packages...]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Build the call graph for the target packages, evaluate dependency rules, and")
+	fmt.Fprintln(w, "print violations in text, JSON, Markdown, or quickfix format.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "If no package pattern is provided, gorefact defaults to `./...`.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Examples:")
+	fmt.Fprintln(w, "  gorefact check ./...")
+	fmt.Fprintln(w, "  gorefact check --rules gorefact.rules.toml --format json ./...")
+	fmt.Fprintln(w, "  gorefact check --dir /path/to/repo --filter-pkg tasks ./...")
+	fmt.Fprintln(w)
+}
+
+func printServeHelp(w io.Writer) {
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintln(w, "  gorefact serve [flags] [packages...]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Build the call graph once, load rules, then serve newline-delimited JSON-RPC")
+	fmt.Fprintln(w, "requests on stdin/stdout for the Neovim plugin.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "If no package pattern is provided, gorefact defaults to `./...`.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Examples:")
+	fmt.Fprintln(w, "  gorefact serve ./...")
+	fmt.Fprintln(w, "  gorefact serve --dir /path/to/repo --rules gorefact.rules.toml ./...")
+	fmt.Fprintln(w)
+}
+
+func printVersionHelp(w io.Writer) {
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintln(w, "  gorefact version")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Print the gorefact binary version.")
+}
+
+func printValidateRulesHelp(w io.Writer) {
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintln(w, "  gorefact validate-rules [flags]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Parse the TOML rules file and report whether it is valid without loading any")
+	fmt.Fprintln(w, "Go packages.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Examples:")
+	fmt.Fprintln(w, "  gorefact validate-rules")
+	fmt.Fprintln(w, "  gorefact validate-rules --rules gorefact.rules.toml")
+	fmt.Fprintln(w)
+}
+
+func printFlagDefaults(fs *flag.FlagSet) {
+	if fs == nil {
+		return
+	}
+	fmt.Fprintln(fs.Output(), "Flags:")
+	fs.PrintDefaults()
 }
 
 func title(stage string) string {
@@ -223,6 +360,47 @@ func resolvePath(baseDir, path string) string {
 		return path
 	}
 	return filepath.Join(baseDir, path)
+}
+
+func version() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info == nil {
+		return "(unknown)"
+	}
+	if v := strings.TrimSpace(info.Main.Version); v != "" && v != "(devel)" {
+		return v
+	}
+	if rev := buildSetting(info, "vcs.revision"); rev != "" {
+		rev = shortRevision(rev)
+		if buildSetting(info, "vcs.modified") == "true" {
+			return rev + "-dirty"
+		}
+		return rev
+	}
+	if strings.TrimSpace(info.Main.Version) != "" {
+		return info.Main.Version
+	}
+	return "(devel)"
+}
+
+func buildSetting(info *debug.BuildInfo, key string) string {
+	if info == nil {
+		return ""
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == key {
+			return strings.TrimSpace(setting.Value)
+		}
+	}
+	return ""
+}
+
+func shortRevision(rev string) string {
+	rev = strings.TrimSpace(rev)
+	if len(rev) > 12 {
+		return rev[:12]
+	}
+	return rev
 }
 
 func writeNotification(w io.Writer, method string, params any) error {

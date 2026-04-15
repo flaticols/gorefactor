@@ -13,7 +13,16 @@
 
 ## Install
 
-Install the binary first:
+### Homebrew
+
+```bash
+brew tap flaticols/apps
+brew install flaticols/apps/gorefact
+```
+
+### Go
+
+Install the latest tagged module version:
 
 ```bash
 go install go.flaticols.dev/gorefactor/cmd/gorefact@latest
@@ -26,6 +35,15 @@ go install ./cmd/gorefact
 ```
 
 Both forms install `gorefact` into `GOBIN` or `$(go env GOPATH)/bin`.
+
+### Release assets
+
+Tagged releases also publish prebuilt archives and Linux packages:
+
+- `tar.gz` and `zip` archives for macOS, Linux, and Windows
+- `.deb`, `.rpm`, and `.apk` packages as release assets
+
+The Linux packages are published as downloadable artifacts. They are not a full APT repository yet.
 
 Required external tools:
 
@@ -166,6 +184,30 @@ Show the binary version:
 ```bash
 gorefact version
 ```
+
+`gorefact version` reads Go build metadata via `debug.ReadBuildInfo()`.
+
+- `go install ...@version` builds usually report the module version
+- release binaries built from a tagged checkout may fall back to the embedded VCS revision when the module version is unavailable
+
+## Release
+
+This repo ships with a release pipeline modeled on `flaticols/bump`:
+
+- `.github/workflows/test-and-tag.yml` runs tests and builds on PRs and pushes to `main`
+- `.github/workflows/release.yml` runs on pushed tags and invokes GoReleaser
+- `.goreleaser.yaml` publishes release archives, Linux packages, and a Homebrew formula update to `flaticols/homebrew-apps`
+
+To publish a release:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Required GitHub secret:
+
+- `GORELEASER_GITHUB_TOKEN` with access to this repo and `flaticols/homebrew-apps`
 
 ## Neovim
 

@@ -1,0 +1,82 @@
+version: 2
+
+project_name: gorefact
+
+builds:
+  - id: gorefact
+    main: ./cmd/gorefact
+    binary: gorefact
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - ids: [gorefact]
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: checksums.txt
+
+nfpms:
+  - ids: [gorefact]
+    package_name: gorefact
+    vendor: flaticols
+    homepage: "https://github.com/flaticols/gorefactor"
+    maintainer: "Denis Panfilov <gh@flaticols.dev>"
+    description: "Go call-graph explorer with dependency rule checks and a Neovim UI"
+    license: "MIT"
+    formats:
+      - deb
+      - rpm
+      - apk
+    bindir: /usr/bin
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/gorefact/copyright
+
+brews:
+  - ids: [gorefact]
+    name: gorefact
+    url_template: "https://github.com/flaticols/gorefactor/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
+    commit_author:
+      name: Denis Panfilov
+      email: gh@flaticols.dev
+    directory: Formula
+    homepage: "https://github.com/flaticols/gorefactor"
+    description: "Go call-graph explorer with dependency rule checks and a Neovim UI"
+    commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
+    license: "MIT"
+    repository:
+      owner: flaticols
+      name: homebrew-apps
+      branch: main
+
+release:
+  github:
+    owner: flaticols
+    name: gorefactor
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"

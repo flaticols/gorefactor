@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 )
@@ -163,8 +164,50 @@ func TestRunVersion(t *testing.T) {
 	if exitCode != 0 {
 		t.Fatalf("run() exitCode = %d, want 0", exitCode)
 	}
-	if !strings.Contains(stdout.String(), "gorefact "+version) {
+	if !strings.Contains(stdout.String(), "gorefact "+expectedVersion()) {
 		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestRunHelp(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"help"}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("run() exitCode = %d, want 0", exitCode)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Commands:") || !strings.Contains(stdout.String(), "gorefact help check") {
+		t.Fatalf("stdout missing root help details: %s", stdout.String())
+	}
+}
+
+func TestRunHelpCheck(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"help", "check"}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("run() exitCode = %d, want 0", exitCode)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "gorefact check [flags] [packages...]") || !strings.Contains(stdout.String(), "Build the call graph") {
+		t.Fatalf("stdout missing check help details: %s", stdout.String())
+	}
+}
+
+func TestRunCheckHelpFlag(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"check", "-h"}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("run() exitCode = %d, want 0", exitCode)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "Usage:") || !strings.Contains(stderr.String(), "Flags:") || !strings.Contains(stderr.String(), "-format") {
+		t.Fatalf("stderr missing flag help: %s", stderr.String())
 	}
 }
 
@@ -190,4 +233,25 @@ func writeFile(t *testing.T, path, contents string) {
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 		t.Fatalf("WriteFile(%s) error = %v", path, err)
 	}
+}
+
+func expectedVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info == nil {
+		return "(unknown)"
+	}
+	if v := strings.TrimSpace(info.Main.Version); v != "" && v != "(devel)" {
+		return v
+	}
+	if rev := buildSetting(info, "vcs.revision"); rev != "" {
+		rev = shortRevision(rev)
+		if buildSetting(info, "vcs.modified") == "true" {
+			return rev + "-dirty"
+		}
+		return rev
+	}
+	if strings.TrimSpace(info.Main.Version) != "" {
+		return info.Main.Version
+	}
+	return "(devel)"
 }

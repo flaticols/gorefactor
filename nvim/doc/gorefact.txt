@@ -32,6 +32,13 @@ INSTALLATION                                                   *gorefact-install
 Install the binary first:
 
     >sh
+    brew tap flaticols/apps
+    brew install flaticols/apps/gorefact
+<
+
+Or with Go:
+
+    >sh
     go install go.flaticols.dev/gorefactor/cmd/gorefact@latest
 <
 
