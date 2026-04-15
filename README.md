@@ -13,11 +13,18 @@
 
 ## Install
 
-Build the binary first:
+Install the binary first:
 
 ```bash
-go build -o gorefact ./cmd/gorefact
+go install ./cmd/gorefact
 ```
+
+This installs `gorefact` into `GOBIN` or `$(go env GOPATH)/bin`.
+
+Required external tools:
+
+- `gorefact` on `PATH`
+- `go` on `PATH`
 
 ### Neovim 0.12 with `vim.pack`
 
@@ -31,7 +38,7 @@ local plug = vim.pack.add({
 vim.opt.rtp:append(plug.path .. "/nvim")
 
 require("gorefact").setup({
-  binary = vim.fn.expand("~/bin/gorefact"),
+  binary = vim.fn.exepath("gorefact"),
   rules = "rules.toml",
   patterns = { "./..." },
 })
@@ -47,7 +54,7 @@ local plug = vim.pack.add({
 vim.opt.rtp:append(plug.path .. "/nvim")
 
 require("gorefact").setup({
-  binary = "/Users/flaticols/Developer/gorefactor/gorefact",
+  binary = vim.fn.exepath("gorefact"),
   dir = vim.fn.getcwd(),
   rules = "rules.toml",
   patterns = { "./..." },
@@ -58,7 +65,7 @@ If you are iterating on a specific package area in a large monorepo, pass `filte
 
 ```lua
 require("gorefact").setup({
-  binary = "/Users/flaticols/Developer/gorefactor/gorefact",
+  binary = vim.fn.exepath("gorefact"),
   rules = "rules.toml",
   patterns = { "./..." },
   filter_pkg = "tasks",
@@ -66,6 +73,39 @@ require("gorefact").setup({
 ```
 
 `vim.pack.add()` installs and loads the Git repository, and `plug.path .. "/nvim"` adds the actual plugin runtime directory from this repo layout.
+
+The plugin module name is:
+
+```lua
+require("gorefact")
+```
+
+Default config:
+
+```lua
+require("gorefact").setup({
+  binary = vim.fn.exepath("gorefact"),
+  dir = vim.fn.getcwd(),
+  tests = false,
+  filter_pkg = "",
+  rules = "rules.toml",
+  patterns = { "./..." },
+  server_args = {},
+  keys = {
+    explore = "<leader>ge",
+    callers = "<leader>gc",
+    callees = "<leader>gC",
+    check = "<leader>gv",
+  },
+})
+```
+
+If you want in-editor help, run:
+
+```vim
+:helptags ALL
+:help gorefact
+```
 
 ## Rules
 

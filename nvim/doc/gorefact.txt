@@ -1,0 +1,155 @@
+*gorefact.txt*  gorefact plugin for Neovim
+
+==============================================================================
+CONTENTS                                                    *gorefact-contents*
+
+1. Introduction ................................................. |gorefact-intro|
+2. Installation ................................................ |gorefact-install|
+3. Setup ........................................................ |gorefact-setup|
+4. Commands .................................................. |gorefact-commands|
+5. Keymaps .................................................... |gorefact-keymaps|
+6. Health ...................................................... |gorefact-health|
+
+==============================================================================
+INTRODUCTION                                                     *gorefact-intro*
+
+gorefact is a Go call-graph explorer with dependency rule checks and a
+Neovim UI for browsing callers, violations, and function details.
+
+The Lua module name is:
+
+    >lua
+    require("gorefact")
+<
+
+The external binary name is:
+
+    gorefact
+
+==============================================================================
+INSTALLATION                                                   *gorefact-install*
+
+Install the binary first:
+
+    >sh
+    go install ./cmd/gorefact
+<
+
+This installs the binary into GOBIN or $(go env GOPATH)/bin.
+
+Using Neovim 0.12 |vim.pack| from the remote repository:
+
+    >lua
+    local plug = vim.pack.add({
+      { src = "https://github.com/flaticols/gorefactor", name = "gorefactor" },
+    })[1]
+
+    vim.opt.rtp:append(plug.path .. "/nvim")
+<
+
+Local development from a checkout on disk:
+
+    >lua
+    local plug = vim.pack.add({
+      { src = "/Users/flaticols/Developer/gorefactor", name = "gorefactor-dev" },
+    })[1]
+
+    vim.opt.rtp:append(plug.path .. "/nvim")
+<
+
+This repository keeps the Neovim runtime under `nvim/`, so appending
+`plug.path .. "/nvim"` is required.
+
+Generate help tags after installation:
+
+    :helptags ALL
+
+==============================================================================
+SETUP                                                             *gorefact-setup*
+
+Minimal setup:
+
+    >lua
+    require("gorefact").setup({
+      binary = vim.fn.exepath("gorefact"),
+      rules = "rules.toml",
+      patterns = { "./..." },
+    })
+<
+
+Default config:
+
+    >lua
+    require("gorefact").setup({
+      binary = vim.fn.exepath("gorefact"),
+      dir = vim.fn.getcwd(),
+      tests = false,
+      filter_pkg = "",
+      rules = "rules.toml",
+      patterns = { "./..." },
+      server_args = {},
+      keys = {
+        explore = "<leader>ge",
+        callers = "<leader>gc",
+        callees = "<leader>gC",
+        check = "<leader>gv",
+      },
+    })
+<
+
+If you want to scope large monorepos to one package fragment:
+
+    >lua
+    require("gorefact").setup({
+      binary = vim.fn.exepath("gorefact"),
+      rules = "rules.toml",
+      patterns = { "./..." },
+      filter_pkg = "tasks",
+    })
+<
+
+==============================================================================
+COMMANDS                                                       *gorefact-commands*
+
+    :GorefactExplore     Open the floating search UI.
+    :GorefactCallers     Open the tree for the function under cursor.
+    :GorefactCallees     Open the alternate grouping entrypoint.
+    :GorefactCheck       Run an async in-memory violation check and populate
+                         quickfix.
+    :GorefactRestart     Restart the background gorefact RPC server.
+    :checkhealth gorefact
+                         Validate binary, rules file, rules syntax, and Go.
+
+==============================================================================
+KEYMAPS                                                         *gorefact-keymaps*
+
+Default mappings from setup():
+
+    <leader>ge          Search
+    <leader>gc          Callers
+    <leader>gC          Alternate tree entrypoint
+    <leader>gv          Async check
+
+Statusline helper:
+
+    >lua
+    require("gorefact").statusline()
+<
+
+==============================================================================
+HEALTH                                                           *gorefact-health*
+
+The health check validates:
+
+- the gorefact binary exists
+- the gorefact binary version can be queried
+- the configured rules file exists
+- the rules file parses via `gorefact validate-rules`
+- the Go toolchain exists
+
+Use:
+
+    :checkhealth gorefact
+
+==============================================================================
+vim:tw=78:ts=8:noet:ft=help:norl:
