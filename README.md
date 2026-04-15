@@ -40,10 +40,7 @@ Both forms install `gorefact` into `GOBIN` or `$(go env GOPATH)/bin`.
 
 Tagged releases also publish prebuilt archives and Linux packages:
 
-- `tar.gz` and `zip` archives for macOS, Linux, and Windows
-- `.deb`, `.rpm`, and `.apk` packages as release assets
-
-The Linux packages are published as downloadable artifacts. They are not a full APT repository yet.
+- `tar.gz` archives for macOS (`amd64`, `arm64`)
 
 Required external tools:
 
@@ -196,7 +193,7 @@ This repo ships with a release pipeline modeled on `flaticols/bump`:
 
 - `.github/workflows/test-and-tag.yml` runs tests and builds on PRs and pushes to `main`
 - `.github/workflows/release.yml` runs on pushed tags and invokes GoReleaser
-- `.goreleaser.yaml` publishes release archives, Linux packages, and a Homebrew formula update to `flaticols/homebrew-apps`
+- `.goreleaser.yaml` publishes macOS release archives and a Homebrew formula update to `flaticols/homebrew-apps`
 
 To publish a release:
 

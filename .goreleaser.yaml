@@ -11,15 +11,14 @@ builds:
     flags:
       - -trimpath
     goos:
-      - linux
-      - windows
       - darwin
     goarch:
       - amd64
       - arm64
 
 archives:
-  - ids: [gorefact]
+  - id: gorefact
+    ids: [gorefact]
     formats: [tar.gz]
     name_template: >-
       {{ .ProjectName }}_
@@ -28,29 +27,9 @@ archives:
       {{- else if eq .Arch "386" }}i386
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
-    format_overrides:
-      - goos: windows
-        formats: [zip]
 
 checksum:
   name_template: checksums.txt
-
-nfpms:
-  - ids: [gorefact]
-    package_name: gorefact
-    vendor: flaticols
-    homepage: "https://github.com/flaticols/gorefactor"
-    maintainer: "Denis Panfilov <gh@flaticols.dev>"
-    description: "Go call-graph explorer with dependency rule checks and a Neovim UI"
-    license: "MIT"
-    formats:
-      - deb
-      - rpm
-      - apk
-    bindir: /usr/bin
-    contents:
-      - src: LICENSE
-        dst: /usr/share/doc/gorefact/copyright
 
 brews:
   - ids: [gorefact]
