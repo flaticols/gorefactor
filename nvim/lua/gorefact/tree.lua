@@ -325,7 +325,7 @@ function M.open(opts)
       vim.notify(vim.inspect(err), vim.log.levels.ERROR, { title = "gorefact tree" })
       return
     end
-    if not func or not func.id then
+    if type(func) ~= "table" or not func.id then
       vim.notify("gorefact: no function under cursor", vim.log.levels.WARN, { title = "gorefact tree" })
       return
     end

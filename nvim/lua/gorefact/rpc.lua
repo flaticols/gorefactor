@@ -1,5 +1,25 @@
 local M = {}
 
+local function normalize_vim_nil(value)
+  if value == vim.NIL then
+    return nil
+  end
+  if type(value) ~= "table" then
+    return value
+  end
+
+  for k, v in pairs(value) do
+    local normalized = normalize_vim_nil(v)
+    if normalized == nil then
+      value[k] = nil
+    else
+      value[k] = normalized
+    end
+  end
+
+  return value
+end
+
 local state = {
   config = {
     binary = "gorefact",
@@ -100,10 +120,10 @@ local function handle_message(raw)
   state.pending[id] = nil
 
   if msg.error then
-    pending(nil, msg.error)
+    pending(nil, normalize_vim_nil(msg.error))
     return
   end
-  pending(msg.result, nil)
+  pending(normalize_vim_nil(msg.result), nil)
 end
 
 local function drain_buffer(buffer)
