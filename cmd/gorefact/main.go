@@ -18,6 +18,7 @@ import (
 )
 
 const version = "0.1.0"
+const defaultRulesFile = "gorefact.rules.toml"
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -50,7 +51,7 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 
 	var (
-		rulesPath = fs.String("rules", "", "path to rules.toml")
+		rulesPath = fs.String("rules", defaultRulesFile, "path to gorefact.rules.toml")
 		format    = fs.String("format", "text", "output format: text|json|md|qf")
 		dir       = fs.String("dir", ".", "working directory")
 		tests     = fs.Bool("tests", false, "include tests")
@@ -60,11 +61,7 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if strings.TrimSpace(*rulesPath) == "" {
-		fmt.Fprintln(stderr, "--rules is required")
-		return 2
-	}
-
+	resolvedRulesPath := resolvePath(*dir, *rulesPath)
 	progress := func(stage string) {
 		fmt.Fprintf(stderr, "%s...\n", title(stage))
 	}
@@ -81,7 +78,7 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	ruleSet, err := rules.Parse(*rulesPath)
+	ruleSet, err := rules.Parse(resolvedRulesPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "parse rules failed: %v\n", err)
 		return 1
@@ -120,7 +117,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 
 	var (
-		rulesPath = fs.String("rules", "", "path to rules.toml")
+		rulesPath = fs.String("rules", defaultRulesFile, "path to gorefact.rules.toml")
 		dir       = fs.String("dir", ".", "working directory")
 		tests     = fs.Bool("tests", false, "include tests")
 		filterPkg = fs.String("filter-pkg", "", "only include packages containing this path fragment")
@@ -129,6 +126,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	resolvedRulesPath := resolvePath(*dir, *rulesPath)
 	progress := func(stage string) {
 		_ = writeNotification(stdout, "gorefact.progress", map[string]string{"stage": title(stage)})
 	}
@@ -146,8 +144,8 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}
 
 	var ruleSet []rules.Rule
-	if strings.TrimSpace(*rulesPath) != "" {
-		ruleSet, err = rules.Parse(*rulesPath)
+	if strings.TrimSpace(resolvedRulesPath) != "" {
+		ruleSet, err = rules.Parse(resolvedRulesPath)
 		if err != nil {
 			fmt.Fprintf(stderr, "parse rules failed: %v\n", err)
 			return 1
@@ -181,12 +179,8 @@ func runValidateRules(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("validate-rules", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
-	rulesPath := fs.String("rules", "", "path to rules.toml")
+	rulesPath := fs.String("rules", defaultRulesFile, "path to gorefact.rules.toml")
 	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	if strings.TrimSpace(*rulesPath) == "" {
-		fmt.Fprintln(stderr, "--rules is required")
 		return 2
 	}
 	ruleSet, err := rules.Parse(*rulesPath)
@@ -220,6 +214,14 @@ func title(stage string) string {
 	default:
 		return filepath.Clean(stage)
 	}
+}
+
+func resolvePath(baseDir, path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(baseDir, path)
 }
 
 func writeNotification(w io.Writer, method string, params any) error {

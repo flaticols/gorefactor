@@ -32,10 +32,16 @@ INSTALLATION                                                   *gorefact-install
 Install the binary first:
 
     >sh
+    go install go.flaticols.dev/gorefactor/cmd/gorefact@latest
+<
+
+From a local checkout:
+
+    >sh
     go install ./cmd/gorefact
 <
 
-This installs the binary into GOBIN or $(go env GOPATH)/bin.
+Both forms install the binary into GOBIN or $(go env GOPATH)/bin.
 
 Using Neovim 0.12 |vim.pack| from the remote repository:
 
@@ -72,7 +78,7 @@ Minimal setup:
     >lua
     require("gorefact").setup({
       binary = vim.fn.exepath("gorefact"),
-      rules = "rules.toml",
+      rules = "gorefact.rules.toml",
       patterns = { "./..." },
     })
 <
@@ -85,14 +91,14 @@ Default config:
       dir = vim.fn.getcwd(),
       tests = false,
       filter_pkg = "",
-      rules = "rules.toml",
+      rules = "gorefact.rules.toml",
       patterns = { "./..." },
       server_args = {},
       keys = {
-        explore = "<leader>ge",
-        callers = "<leader>gc",
-        callees = "<leader>gC",
-        check = "<leader>gv",
+        explore = "<leader>Re",
+        callers = "<leader>Rc",
+        callees = "<leader>RC",
+        check = "<leader>Rv",
       },
     })
 <
@@ -102,7 +108,7 @@ If you want to scope large monorepos to one package fragment:
     >lua
     require("gorefact").setup({
       binary = vim.fn.exepath("gorefact"),
-      rules = "rules.toml",
+      rules = "gorefact.rules.toml",
       patterns = { "./..." },
       filter_pkg = "tasks",
     })
@@ -125,10 +131,10 @@ KEYMAPS                                                         *gorefact-keymap
 
 Default mappings from setup():
 
-    <leader>ge          Search
-    <leader>gc          Callers
-    <leader>gC          Alternate tree entrypoint
-    <leader>gv          Async check
+    <leader>Re          Search
+    <leader>Rc          Callers
+    <leader>RC          Alternate tree entrypoint
+    <leader>Rv          Async check
 
 Statusline helper:
 

@@ -36,6 +36,30 @@ func TestRunCheck(t *testing.T) {
 	}
 }
 
+func TestRunCheckUsesDefaultRulesFile(t *testing.T) {
+	dir := t.TempDir()
+
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.26.2\n")
+	writeFile(t, filepath.Join(dir, "tasks", "task.go"), "package tasks\n\nimport \"example.com/test/adapters\"\n\nfunc Run() {\n\tadapters.Do()\n}\n")
+	writeFile(t, filepath.Join(dir, "adapters", "adapters.go"), "package adapters\n\nfunc Do() {}\n")
+	writeFile(t, filepath.Join(dir, defaultRulesFile), "[[deny]]\nfrom = \"tasks\"\nto = \"adapters\"\nreason = \"tasks must not depend on adapters\"\n")
+
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{
+		"check",
+		"--format", "text",
+		"--dir", dir,
+		"./...",
+	}, &stdout, &stderr)
+
+	if exitCode != 1 {
+		t.Fatalf("run() exitCode = %d, want 1", exitCode)
+	}
+	if !strings.Contains(stdout.String(), "VIOLATION tasks -> adapters") {
+		t.Fatalf("stdout missing violation report: %s", stdout.String())
+	}
+}
+
 func TestRunCheckWithFilterPkgScopesGraph(t *testing.T) {
 	dir := t.TempDir()
 

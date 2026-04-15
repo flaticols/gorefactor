@@ -16,10 +16,16 @@
 Install the binary first:
 
 ```bash
+go install go.flaticols.dev/gorefactor/cmd/gorefact@latest
+```
+
+From a local checkout, use:
+
+```bash
 go install ./cmd/gorefact
 ```
 
-This installs `gorefact` into `GOBIN` or `$(go env GOPATH)/bin`.
+Both forms install `gorefact` into `GOBIN` or `$(go env GOPATH)/bin`.
 
 Required external tools:
 
@@ -39,7 +45,7 @@ vim.opt.rtp:append(plug.path .. "/nvim")
 
 require("gorefact").setup({
   binary = vim.fn.exepath("gorefact"),
-  rules = "rules.toml",
+  rules = "gorefact.rules.toml",
   patterns = { "./..." },
 })
 ```
@@ -56,7 +62,7 @@ vim.opt.rtp:append(plug.path .. "/nvim")
 require("gorefact").setup({
   binary = vim.fn.exepath("gorefact"),
   dir = vim.fn.getcwd(),
-  rules = "rules.toml",
+  rules = "gorefact.rules.toml",
   patterns = { "./..." },
 })
 ```
@@ -66,7 +72,7 @@ If you are iterating on a specific package area in a large monorepo, pass `filte
 ```lua
 require("gorefact").setup({
   binary = vim.fn.exepath("gorefact"),
-  rules = "rules.toml",
+  rules = "gorefact.rules.toml",
   patterns = { "./..." },
   filter_pkg = "tasks",
 })
@@ -88,14 +94,14 @@ require("gorefact").setup({
   dir = vim.fn.getcwd(),
   tests = false,
   filter_pkg = "",
-  rules = "rules.toml",
+  rules = "gorefact.rules.toml",
   patterns = { "./..." },
   server_args = {},
   keys = {
-    explore = "<leader>ge",
-    callers = "<leader>gc",
-    callees = "<leader>gC",
-    check = "<leader>gv",
+    explore = "<leader>Re",
+    callers = "<leader>Rc",
+    callees = "<leader>RC",
+    check = "<leader>Rv",
   },
 })
 ```
@@ -109,7 +115,7 @@ If you want in-editor help, run:
 
 ## Rules
 
-Example `rules.toml`:
+Example `gorefact.rules.toml`:
 
 ```toml
 [[deny]]
@@ -126,7 +132,7 @@ reason = "handlers must go through service layer"
 Validate rules without building the graph:
 
 ```bash
-gorefact validate-rules --rules rules.toml
+gorefact validate-rules --rules gorefact.rules.toml
 ```
 
 ## CLI
@@ -134,25 +140,25 @@ gorefact validate-rules --rules rules.toml
 Check a repository:
 
 ```bash
-gorefact check --rules rules.toml ./...
+gorefact check --rules gorefact.rules.toml ./...
 ```
 
 Quickfix output for Neovim:
 
 ```bash
-gorefact check --rules rules.toml --format qf ./...
+gorefact check --rules gorefact.rules.toml --format qf ./...
 ```
 
 Scope loading to a package fragment:
 
 ```bash
-gorefact check --rules rules.toml --filter-pkg tasks ./...
+gorefact check --rules gorefact.rules.toml --filter-pkg tasks ./...
 ```
 
 Run the RPC server:
 
 ```bash
-gorefact serve --rules rules.toml ./...
+gorefact serve --rules gorefact.rules.toml ./...
 ```
 
 Show the binary version:
@@ -174,10 +180,10 @@ Available commands:
 
 Default keymaps:
 
-- `<leader>ge` search
-- `<leader>gc` callers
-- `<leader>gC` alternate tree grouping entrypoint
-- `<leader>gv` async check
+- `<leader>Re` search
+- `<leader>Rc` callers
+- `<leader>RC` alternate tree grouping entrypoint
+- `<leader>Rv` async check
 
 Statusline helper:
 

@@ -6,7 +6,7 @@ local state = {
     dir = ".",
     tests = false,
     filter_pkg = "",
-    rules = "rules.toml",
+    rules = "gorefact.rules.toml",
     patterns = { "./..." },
     server_args = {},
   },
