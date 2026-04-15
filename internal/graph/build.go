@@ -38,7 +38,7 @@ func Build(cfg BuildConfig) (*Graph, error) {
 	progress("loading packages")
 	fset := token.NewFileSet()
 	pkgs, err := packages.Load(&packages.Config{
-		Mode:  packages.LoadAllSyntax,
+		Mode:  packages.LoadAllSyntax | packages.NeedModule,
 		Dir:   cfg.Dir,
 		Tests: cfg.Tests,
 		Fset:  fset,
@@ -53,6 +53,7 @@ func Build(cfg BuildConfig) (*Graph, error) {
 	if len(pkgs) == 0 {
 		return &Graph{}, nil
 	}
+	packageModules := packageModuleMap(pkgs)
 
 	progress("building ssa")
 	prog, ssaPkgs := ssautil.AllPackages(pkgs, ssa.InstantiateGenerics)
@@ -72,7 +73,7 @@ func Build(cfg BuildConfig) (*Graph, error) {
 		if _, ok := funcIDs[fn]; ok {
 			return
 		}
-		decl := ssaFuncToFunc(fn, fset, nextID, cfg.Dir)
+		decl := ssaFuncToFunc(fn, fset, nextID, cfg.Dir, packageModules)
 		if decl == nil {
 			return
 		}
@@ -219,7 +220,7 @@ func filterGraphByPackage(g *Graph, filter string) *Graph {
 	return out
 }
 
-func ssaFuncToFunc(fn *ssa.Function, fset *token.FileSet, id int, baseDir string) *Func {
+func ssaFuncToFunc(fn *ssa.Function, fset *token.FileSet, id int, baseDir string, packageModules map[string]string) *Func {
 	if fn == nil || fn.Pos() == token.NoPos {
 		return nil
 	}
@@ -253,6 +254,7 @@ func ssaFuncToFunc(fn *ssa.Function, fset *token.FileSet, id int, baseDir string
 
 	return &Func{
 		ID:        id,
+		Module:    packageModules[pkgPath],
 		Name:      name,
 		Receiver:  recv,
 		Signature: fn.String(),
@@ -262,6 +264,33 @@ func ssaFuncToFunc(fn *ssa.Function, fset *token.FileSet, id int, baseDir string
 		Col:       pos.Column,
 		Exported:  exported,
 	}
+}
+
+func packageModuleMap(pkgs []*packages.Package) map[string]string {
+	out := make(map[string]string)
+	seen := make(map[*packages.Package]struct{})
+
+	var walk func(pkg *packages.Package)
+	walk = func(pkg *packages.Package) {
+		if pkg == nil {
+			return
+		}
+		if _, ok := seen[pkg]; ok {
+			return
+		}
+		seen[pkg] = struct{}{}
+		if pkg.PkgPath != "" && pkg.Module != nil {
+			out[pkg.PkgPath] = pkg.Module.Path
+		}
+		for _, imported := range pkg.Imports {
+			walk(imported)
+		}
+	}
+
+	for _, pkg := range pkgs {
+		walk(pkg)
+	}
+	return out
 }
 
 func formatRecv(t types.Type) string {

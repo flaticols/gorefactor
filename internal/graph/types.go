@@ -8,6 +8,7 @@ import (
 // Func describes a function or method in the call graph.
 type Func struct {
 	ID        int
+	Module    string
 	Name      string
 	Receiver  string
 	Signature string

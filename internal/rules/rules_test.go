@@ -31,58 +31,73 @@ reason = "tasks must not depend on adapters"
 }
 
 func TestCheckAndFormatters(t *testing.T) {
+	baseDir := t.TempDir()
 	g := &graph.Graph{
 		Funcs: []graph.Func{
-			{ID: 1, Name: "Execute", Package: "tasks", File: "tasks/process.go", Line: 123, Col: 5},
-			{ID: 2, Name: "Calculate", Package: "adapters", File: "adapters/engine.go", Line: 45, Col: 3},
-			{ID: 3, Name: "Compute", Package: "service", File: "service/pricing.go", Line: 67, Col: 2},
+			{ID: 1, Module: "example.com/test", Name: "Execute", Package: "example.com/test/tasks", File: filepath.Join(baseDir, "tasks", "process.go"), Line: 123, Col: 5},
+			{ID: 2, Module: "example.com/test", Name: "Calculate", Package: "example.com/test/adapters", File: filepath.Join(baseDir, "adapters", "engine.go"), Line: 45, Col: 3},
+			{ID: 3, Module: "example.com/test", Name: "Compute", Package: "example.com/test/service", File: filepath.Join(baseDir, "service", "pricing.go"), Line: 67, Col: 2},
 		},
 		Edges: []graph.Edge{
-			{Caller: 1, Callee: 2, File: "tasks/process.go", Line: 123, Col: 5},
-			{Caller: 3, Callee: 2, File: "service/pricing.go", Line: 67, Col: 2},
+			{Caller: 1, Callee: 2, File: filepath.Join(baseDir, "tasks", "process.go"), Line: 140, Col: 9},
+			{Caller: 3, Callee: 2, File: filepath.Join(baseDir, "service", "pricing.go"), Line: 67, Col: 2},
 		},
 	}
 	g.Index()
 
 	rules := []Rule{
-		{From: "tasks", To: "adapters", Reason: "tasks must not depend on adapters"},
-		{From: "service", To: "adapters", Reason: "service must not depend on adapters"},
+		{From: "example.com/test/tasks", To: "example.com/test/adapters", Reason: "tasks must not depend on adapters"},
+		{From: "example.com/test/service", To: "example.com/test/adapters", Reason: "service must not depend on adapters"},
 	}
 
 	violations := Check(g, rules)
 	if len(violations) != 2 {
 		t.Fatalf("Check len = %d, want 2", len(violations))
 	}
-	if got := CheckEdge(g, g.Edges[0], rules); got == nil || got.From != "tasks" {
+	if got := CheckEdge(g, g.Edges[0], rules); got == nil || got.From != "example.com/test/tasks" {
 		t.Fatalf("CheckEdge = %#v", got)
 	}
-	if got := CheckEdge(g, g.Edges[1], rules); got == nil || got.From != "service" {
+	if got := CheckEdge(g, g.Edges[1], rules); got == nil || got.From != "example.com/test/service" {
 		t.Fatalf("CheckEdge = %#v", got)
 	}
 	if got := CheckEdge(g, graph.Edge{Caller: 2, Callee: 3}, rules); got != nil {
 		t.Fatalf("CheckEdge unexpected hit = %#v", got)
 	}
 
-	text := FormatText(violations)
-	if !strings.Contains(text, "VIOLATION tasks -> adapters") {
+	opts := FormatOptions{BaseDir: baseDir}
+
+	text := FormatText(violations, opts)
+	if !strings.Contains(text, "VIOLATION example.com/test/tasks -> example.com/test/adapters") {
 		t.Fatalf("FormatText missing rule header: %s", text)
 	}
+	if !strings.Contains(text, "at tasks/process.go:140:9") {
+		t.Fatalf("FormatText missing relative callsite: %s", text)
+	}
 
-	jsonBytes, err := FormatJSON(violations, len(rules))
+	jsonBytes, err := FormatJSON(violations, len(rules), opts)
 	if err != nil {
 		t.Fatalf("FormatJSON error = %v", err)
 	}
 	if !strings.Contains(string(jsonBytes), `"total_violations": 2`) {
 		t.Fatalf("FormatJSON missing summary: %s", jsonBytes)
 	}
-
-	md := FormatMarkdown(violations, len(rules))
-	if !strings.Contains(md, "# Dependency Violations Report") || !strings.Contains(md, "| # | Caller | Callee | File | Line |") {
-		t.Fatalf("FormatMarkdown invalid output: %s", md)
+	if !strings.Contains(string(jsonBytes), `"working_dir":`) || !strings.Contains(string(jsonBytes), `"module": "example.com/test"`) || !strings.Contains(string(jsonBytes), `"callsite":`) {
+		t.Fatalf("FormatJSON missing metadata: %s", jsonBytes)
+	}
+	if strings.Contains(string(jsonBytes), filepath.ToSlash(filepath.Join(baseDir, "tasks", "process.go"))) || strings.Contains(string(jsonBytes), filepath.ToSlash(filepath.Join(baseDir, "adapters", "engine.go"))) {
+		t.Fatalf("FormatJSON leaked absolute path: %s", jsonBytes)
 	}
 
-	qf := FormatQuickfix(violations)
-	if !strings.Contains(qf, "tasks/process.go:123:5: VIOLATION tasks→adapters") {
+	md := FormatMarkdown(violations, len(rules), opts)
+	if !strings.Contains(md, "# Dependency Violations Report") || !strings.Contains(md, "| # | Callsite | Caller | Callee | Dynamic |") {
+		t.Fatalf("FormatMarkdown invalid output: %s", md)
+	}
+	if !strings.Contains(md, "`tasks/process.go:140:9`") {
+		t.Fatalf("FormatMarkdown missing relative callsite: %s", md)
+	}
+
+	qf := FormatQuickfix(violations, opts)
+	if !strings.Contains(qf, "tasks/process.go:140:9: VIOLATION example.com/test/tasks→example.com/test/adapters") {
 		t.Fatalf("FormatQuickfix invalid output: %s", qf)
 	}
 }

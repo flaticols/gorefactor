@@ -58,6 +58,62 @@ func TestRunCheckUsesDefaultRulesFile(t *testing.T) {
 	if !strings.Contains(stdout.String(), "VIOLATION tasks -> adapters") {
 		t.Fatalf("stdout missing violation report: %s", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "at tasks/task.go:6:13") {
+		t.Fatalf("stdout missing relative callsite: %s", stdout.String())
+	}
+}
+
+func TestRunCheckJSONAndMarkdown(t *testing.T) {
+	dir := t.TempDir()
+
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.26.2\n")
+	writeFile(t, filepath.Join(dir, "tasks", "task.go"), "package tasks\n\nimport \"example.com/test/adapters\"\n\nfunc Run() {\n\tadapters.Do()\n}\n")
+	writeFile(t, filepath.Join(dir, "adapters", "adapters.go"), "package adapters\n\nfunc Do() {}\n")
+	writeFile(t, filepath.Join(dir, defaultRulesFile), "[[deny]]\nfrom = \"tasks\"\nto = \"adapters\"\nreason = \"tasks must not depend on adapters\"\n")
+
+	cases := []struct {
+		format string
+		want   []string
+	}{
+		{
+			format: "json",
+			want: []string{
+				`"working_dir":`,
+				`"callsite":`,
+				`"module": "example.com/test"`,
+				`"file": "tasks/task.go"`,
+			},
+		},
+		{
+			format: "md",
+			want: []string{
+				"# Dependency Violations Report",
+				"| # | Callsite | Caller | Callee | Dynamic |",
+				"`tasks/task.go:6:13`",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.format, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			exitCode := run([]string{
+				"check",
+				"--format", tc.format,
+				"--dir", dir,
+				"./...",
+			}, &stdout, &stderr)
+
+			if exitCode != 1 {
+				t.Fatalf("run() exitCode = %d, want 1, stderr=%s", exitCode, stderr.String())
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(stdout.String(), want) {
+					t.Fatalf("stdout missing %q: %s", want, stdout.String())
+				}
+			}
+		})
+	}
 }
 
 func TestRunCheckWithFilterPkgScopesGraph(t *testing.T) {

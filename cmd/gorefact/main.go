@@ -85,21 +85,22 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	}
 
 	violations := rules.Check(g, ruleSet)
+	formatOpts := rules.FormatOptions{BaseDir: *dir}
 
 	switch strings.ToLower(strings.TrimSpace(*format)) {
 	case "text":
-		_, _ = io.WriteString(stdout, rules.FormatText(violations))
+		_, _ = io.WriteString(stdout, rules.FormatText(violations, formatOpts))
 	case "json":
-		data, err := rules.FormatJSON(violations, len(ruleSet))
+		data, err := rules.FormatJSON(violations, len(ruleSet), formatOpts)
 		if err != nil {
 			fmt.Fprintf(stderr, "format json failed: %v\n", err)
 			return 1
 		}
 		_, _ = stdout.Write(append(data, '\n'))
 	case "md", "markdown":
-		_, _ = io.WriteString(stdout, rules.FormatMarkdown(violations, len(ruleSet)))
+		_, _ = io.WriteString(stdout, rules.FormatMarkdown(violations, len(ruleSet), formatOpts))
 	case "qf", "quickfix":
-		_, _ = io.WriteString(stdout, rules.FormatQuickfix(violations))
+		_, _ = io.WriteString(stdout, rules.FormatQuickfix(violations, formatOpts))
 	default:
 		fmt.Fprintf(stderr, "unknown format %q\n", *format)
 		return 2
