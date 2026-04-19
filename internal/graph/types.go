@@ -46,8 +46,9 @@ type Edge struct {
 	Callee    int
 	Kind      EdgeKind // call, read, write, typeref; empty treated as call
 	SamePkg   bool     // true when caller and callee share the same package
-	CallerPkg string   // package path of the caller; populated by T2 WalkRefs
-	File      string
+	CallerPkg  string // package path of the caller; populated by T2 WalkRefs
+	CallerFunc string // unqualified func/method name of the caller; populated by T2 WalkRefs
+	File       string
 	Line      int
 	Col       int
 	Dynamic   bool

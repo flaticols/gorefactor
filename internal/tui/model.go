@@ -19,6 +19,7 @@ type GroupMode int
 const (
 	GroupPkg  GroupMode = iota // group by caller package path
 	GroupFile                  // group by file path
+	GroupFunc                  // group by caller function (pkg.Func or pkg.(*Recv).Method)
 )
 
 type pane int
@@ -206,9 +207,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "g":
 			if m.result != nil {
-				if m.group == GroupPkg {
+				switch m.group {
+				case GroupPkg:
 					m.group = GroupFile
-				} else {
+				case GroupFile:
+					m.group = GroupFunc
+				default:
 					m.group = GroupPkg
 				}
 				m = updateTree(m)
@@ -346,7 +350,7 @@ func (m Model) renderList(w, h int) string {
 		if len(lines) >= h {
 			break
 		}
-		label := fmt.Sprintf("%s (%s) [%d]", s.sym.Name, s.sym.Kind, s.refCount)
+		label := fmt.Sprintf("%s.%s (%s) [%d]", s.sym.Package, s.sym.Name, s.sym.Kind, s.refCount)
 		label = truncate(label, w-1)
 		switch {
 		case i == m.listIdx && m.active == paneList:
@@ -366,8 +370,11 @@ func (m Model) renderList(w, h int) string {
 
 func (m Model) renderTree(w, h int) string {
 	groupName := "pkg"
-	if m.group == GroupFile {
+	switch m.group {
+	case GroupFile:
 		groupName = "file"
+	case GroupFunc:
+		groupName = "func"
 	}
 	titleStr := fmt.Sprintf("References [group=%s]", groupName)
 	if m.active == paneTree {
@@ -440,8 +447,11 @@ func (m Model) renderHelpBar() string {
 		violStr = "on"
 	}
 	groupStr := "pkg"
-	if m.group == GroupFile {
+	switch m.group {
+	case GroupFile:
 		groupStr = "file"
+	case GroupFunc:
+		groupStr = "func"
 	}
 	parts := []string{
 		"[/] search",

@@ -28,6 +28,8 @@ func buildTreeLines(
 	switch group {
 	case GroupFile:
 		return treeByFile(relevant, violOnly, violPkgs)
+	case GroupFunc:
+		return treeByFunc(relevant, violOnly, violPkgs)
 	default:
 		return treeByPkg(relevant, violOnly, violPkgs)
 	}
@@ -60,6 +62,49 @@ func treeByPkg(edges []graph.Edge, violOnly bool, violPkgs map[string]bool) []st
 			marker = styleViolation.Render("✗")
 		}
 		lines = append(lines, fmt.Sprintf("  %s %s (%d refs)", marker, pkg, len(es)))
+		for _, e := range es {
+			sameMark := ""
+			if e.SamePkg {
+				sameMark = " ~"
+			}
+			lines = append(lines, fmt.Sprintf("      %s:%d%s", e.File, e.Line, sameMark))
+		}
+	}
+	if len(lines) == 0 {
+		return []string{"  (no violations)"}
+	}
+	return lines
+}
+
+func treeByFunc(edges []graph.Edge, violOnly bool, violPkgs map[string]bool) []string {
+	groups := make(map[string][]graph.Edge)
+	for _, e := range edges {
+		fn := e.CallerFunc
+		if fn == "" {
+			fn = "(unknown)"
+		}
+		key := e.CallerPkg + "." + fn
+		groups[key] = append(groups[key], e)
+	}
+	keys := make([]string, 0, len(groups))
+	for k := range groups {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var lines []string
+	for _, key := range keys {
+		es := groups[key]
+		pkg := es[0].CallerPkg
+		isViol := violPkgs[pkg]
+		if violOnly && !isViol {
+			continue
+		}
+		marker := "✓"
+		if isViol {
+			marker = styleViolation.Render("✗")
+		}
+		lines = append(lines, fmt.Sprintf("  %s %s (%d refs)", marker, key, len(es)))
 		for _, e := range es {
 			sameMark := ""
 			if e.SamePkg {

@@ -1,6 +1,8 @@
 package loader
 
 import (
+	"go/ast"
+	"go/token"
 	"go/types"
 	"sort"
 
@@ -108,19 +110,62 @@ func WalkRefs(targetPkg string, importerPaths []string, cfg Config, startID int)
 			callerFuncID := 0
 
 			result.Edges = append(result.Edges, graph.Edge{
-				Caller:    callerFuncID,
-				Callee:    sym.ID,
-				Kind:      classifyRef(obj),
-				SamePkg:   samePkg,
-				CallerPkg: ipkg.PkgPath,
-				File:      cleanPath(cfg.Dir, pos.Filename),
-				Line:      pos.Line,
-				Col:       pos.Column,
+				Caller:     callerFuncID,
+				Callee:     sym.ID,
+				Kind:       classifyRef(obj),
+				SamePkg:    samePkg,
+				CallerPkg:  ipkg.PkgPath,
+				CallerFunc: enclosingFuncName(ipkg.Fset, ipkg.Syntax, ident.Pos()),
+				File:       cleanPath(cfg.Dir, pos.Filename),
+				Line:       pos.Line,
+				Col:        pos.Column,
 			})
 		}
 	}
 
 	return result, nil
+}
+
+// enclosingFuncName returns "FuncName" or "(*Recv).Method" for the innermost
+// function/method declaration containing pos. Returns "" for package-level or
+// init code where no enclosing named function exists.
+func enclosingFuncName(fset *token.FileSet, files []*ast.File, pos token.Pos) string {
+	for _, f := range files {
+		if pos < f.Pos() || pos >= f.End() {
+			continue
+		}
+		var name string
+		ast.Inspect(f, func(n ast.Node) bool {
+			if n == nil {
+				return false
+			}
+			if pos < n.Pos() || pos >= n.End() {
+				return false
+			}
+			fd, ok := n.(*ast.FuncDecl)
+			if !ok || fd.Name == nil {
+				return true
+			}
+			if fd.Recv != nil && len(fd.Recv.List) > 0 {
+				recv := fd.Recv.List[0].Type
+				var recvName string
+				switch r := recv.(type) {
+				case *ast.StarExpr:
+					if id, ok2 := r.X.(*ast.Ident); ok2 {
+						recvName = "(*" + id.Name + ")"
+					}
+				case *ast.Ident:
+					recvName = r.Name
+				}
+				name = recvName + "." + fd.Name.Name
+			} else {
+				name = fd.Name.Name
+			}
+			return true
+		})
+		return name
+	}
+	return ""
 }
 
 // symKind maps a types.Object to the Symbol.Kind string.
