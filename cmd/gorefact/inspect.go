@@ -29,7 +29,6 @@ func runInspect(args []string, stdout, stderr io.Writer) int {
 		format    = fs.String("format", "text", "output format: text|json|md|qf (non-TTY only)")
 		tests     = fs.Bool("tests", false, "include test packages")
 		filterPkg = fs.String("filter-pkg", "", "only include packages containing this path fragment")
-		noTUI     = fs.Bool("no-tui", false, "force CLI output even on TTY")
 	)
 
 	if err := fs.Parse(args); err != nil {
@@ -64,7 +63,7 @@ func runInspect(args []string, stdout, stderr io.Writer) int {
 		Rules: ruleSet,
 	}
 
-	if !*noTUI && isTTY() {
+	if isTTY() {
 		if err := tui.Run(target, cfg); err != nil {
 			fmt.Fprintf(stderr, "tui error: %v\n", err)
 			return 1
@@ -125,6 +124,6 @@ func printInspectHelp(w io.Writer) {
 	fmt.Fprintln(w, "Examples:")
 	fmt.Fprintln(w, "  gorefact inspect github.com/acme/tasks")
 	fmt.Fprintln(w, "  gorefact inspect github.com/acme/tasks.Engine --format json")
-	fmt.Fprintln(w, "  gorefact inspect github.com/acme/tasks --no-tui --format text")
+	fmt.Fprintln(w, "  gorefact inspect github.com/acme/tasks | less")
 	fmt.Fprintln(w)
 }

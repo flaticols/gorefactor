@@ -265,7 +265,6 @@ func Make() alpha.Widget { return alpha.Widget{} }
 	var out, errOut strings.Builder
 	code := run([]string{
 		"inspect",
-		"--no-tui",
 		"--format", "text",
 		"--dir", dir,
 		"example.com/testmod/alpha",
