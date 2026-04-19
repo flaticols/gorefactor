@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -15,6 +17,15 @@ import (
 
 // pkgListMsg carries the T1 package list loaded in the background.
 type pkgListMsg []string
+
+// treeRef is a (file, line) pointer for a rendered tree child row.
+// Zero value means the row is a group header with no direct reference.
+type treeRef struct {
+	file string
+	line int
+}
+
+type editorDoneMsg struct{ err error }
 
 // GroupMode controls how reference edges are grouped in the tree pane.
 type GroupMode int
@@ -60,6 +71,7 @@ type Model struct {
 	listIdx int
 
 	treeLines []string
+	treeRefs  []treeRef // parallel to treeLines: file+line for reference child rows
 	treeIdx   int
 
 	group      GroupMode
@@ -245,6 +257,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showDetail = !m.showDetail
 			return m, nil
 
+		case "e":
+			file, line := m.currentRef()
+			if file == "" {
+				return m, nil
+			}
+			editor := os.Getenv("EDITOR")
+			if editor == "" {
+				editor = "vi"
+			}
+			args := []string{file}
+			if line > 0 {
+				args = []string{fmt.Sprintf("+%d", line), file}
+			}
+			return m, tea.ExecProcess(exec.Command(editor, args...), func(err error) tea.Msg {
+				return editorDoneMsg{err}
+			})
+
 		case "tab", "l":
 			if m.active == paneList {
 				m.active = paneTree
@@ -340,7 +369,7 @@ func updateTree(m Model) Model {
 	for _, v := range m.result.Violations {
 		violPkgs[v.FromPkg] = true
 	}
-	m.treeLines = buildTreeLines(m.result.Edges, sel.sym.ID, m.group, m.violOnly, violPkgs)
+	m.treeLines, m.treeRefs = buildTreeLines(m.result.Edges, sel.sym.ID, m.group, m.violOnly, violPkgs)
 	m.treeIdx = 0
 	return m
 }
@@ -359,16 +388,13 @@ func (m Model) View() string {
 
 	help := m.renderHelpBar()
 
-	// Reserve rows: 1 search + 1 help + dropdown (when in search mode) + detailPanel (when shown).
+	// Reserve rows: 1 search + 1 help + dropdown (when in search mode).
+	// The detail panel is overlaid on the body, not stacked.
 	dropdownH := 0
 	if m.inputMode && len(m.searchResults) > 0 {
 		dropdownH = min(len(m.searchResults), 10)
 	}
-	detailH := 0
-	if m.showDetail {
-		detailH = detailPanelHeight
-	}
-	contentH := m.height - 2 - dropdownH - detailH
+	contentH := m.height - 2 - dropdownH
 	if contentH < 2 {
 		contentH = 2
 	}
@@ -382,16 +408,15 @@ func (m Model) View() string {
 	left := m.renderList(leftW, contentH)
 	right := m.renderTree(rightW, contentH)
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+	if m.showDetail {
+		body = overlayBottom(body, m.renderDetailPanel())
+	}
 
 	parts := []string{searchBar}
 	if dropdownH > 0 {
 		parts = append(parts, m.renderSearchDropdown(dropdownH))
 	}
-	parts = append(parts, body)
-	if m.showDetail {
-		parts = append(parts, m.renderDetailPanel())
-	}
-	parts = append(parts, help)
+	parts = append(parts, body, help)
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
@@ -458,7 +483,11 @@ func (m Model) renderList(w, h int) string {
 		if len(lines) >= h {
 			break
 		}
-		label := fmt.Sprintf("%s.%s (%s) [%d]", s.sym.Package, s.sym.Name, s.sym.Kind, s.refCount)
+		pkgSeg := s.sym.Package
+		if i := strings.LastIndex(pkgSeg, "/"); i >= 0 {
+			pkgSeg = pkgSeg[i+1:]
+		}
+		label := fmt.Sprintf("%s.%s (%s) [%d]", pkgSeg, s.sym.Name, s.sym.Kind, s.refCount)
 		label = truncate(label, w-1)
 		switch {
 		case i == m.listIdx && m.active == paneList:
@@ -572,10 +601,42 @@ func (m Model) renderHelpBar() string {
 		"[g] group=" + groupStr,
 		"[f] violations=" + violStr,
 		"[i] detail=" + detailStr,
+		"[e] open",
 		"[q] quit",
 	}
 	return styleHelp.Render(strings.Join(parts, "  "))
 }
+
+// currentRef returns the file and line for the focused element.
+func (m Model) currentRef() (file string, line int) {
+	switch m.active {
+	case paneTree:
+		if m.treeIdx < len(m.treeRefs) {
+			r := m.treeRefs[m.treeIdx]
+			return r.file, r.line
+		}
+	case paneList:
+		if m.listIdx < len(m.symbols) {
+			s := m.symbols[m.listIdx].sym
+			return s.File, s.Line
+		}
+	}
+	return "", 0
+}
+
+// overlayBottom renders panel on top of the last lines of base.
+func overlayBottom(base, panel string) string {
+	bLines := strings.Split(base, "\n")
+	pLines := strings.Split(panel, "\n")
+	if len(pLines) >= len(bLines) {
+		return panel
+	}
+	out := make([]string, len(bLines))
+	copy(out, bLines)
+	copy(out[len(bLines)-len(pLines):], pLines)
+	return strings.Join(out, "\n")
+}
+
 
 func truncate(s string, max int) string {
 	if max <= 3 || len(s) <= max {

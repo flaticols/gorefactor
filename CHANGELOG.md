@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.12] - 2026-04-19
+
+### Added
+- `e` key opens the focused reference (tree pane) or symbol declaration (list pane) in `$EDITOR` (falls back to `vi`)
+- Detail panel is now a true overlay: rendered on top of the two-pane body without shrinking the content area
+
+### Changed
+- Symbol list shows `pkg.Name (kind) [N]` (last segment only); full qualified name still shown in search dropdown and detail panel
+
 ## [0.0.11] - 2026-04-19
 
 ### Changed
