@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.16] - 2026-04-19
+
+### Added
+- Live per-member references: navigating through struct/interface members with `j`/`k` rebuilds the right panel to show references to the selected method or field (via `types.Info.Selections` over importer packages)
+- `?` toggles full help (bubbles/help + bubbles/key): help bar auto-generated from the key map with short/expanded modes
+
+### Changed
+- Both panes now use `bubbles/viewport` for real scrolling (mouse wheel, `ctrl+d/u`); long reference lists no longer truncate at the fold — selection keeps the cursor line in view
+- Struct-member panel rendered with `lipgloss/tree` (proper `├─ └─` branching) instead of hand-rolled `|-` prefixes; reference counts `[N]` shown per member
+
 ## [0.0.15] - 2026-04-19
 
 ### Added

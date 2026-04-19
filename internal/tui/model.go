@@ -6,10 +6,13 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/tree"
 
 	"go.flaticols.dev/gorefactor/internal/graph"
 	"go.flaticols.dev/gorefactor/internal/inspect"
@@ -115,6 +118,11 @@ type Model struct {
 	structName    string
 	structIdx     int
 
+	keys    keyMap
+	help    help.Model
+	listVP  viewport.Model
+	treeVP  viewport.Model
+
 	loading bool
 	err     error
 }
@@ -129,6 +137,8 @@ func New(initialTarget string, cfg inspect.Config) Model {
 	sp.Spinner = spinner.Dot
 
 	hasTarget := strings.TrimSpace(initialTarget) != ""
+	h := help.New()
+	h.ShowAll = false
 	m := Model{
 		cfg:       cfg,
 		input:     ti,
@@ -136,6 +146,10 @@ func New(initialTarget string, cfg inspect.Config) Model {
 		active:    paneList,
 		loading:   hasTarget,
 		inputMode: hasTarget,
+		keys:      defaultKeys(),
+		help:      h,
+		listVP:    viewport.New(0, 0),
+		treeVP:    viewport.New(0, 0),
 	}
 	if hasTarget {
 		m.input.Focus()
@@ -198,6 +212,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.input.Width = m.width - 12
+		m.help.Width = m.width
 		return m, nil
 
 	case pkgListMsg:
@@ -214,6 +229,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.view == viewStruct && m.structPkg == msg.pkgPath && m.structName == msg.typeName {
 			m.structMembers = msg.members
 			m.structIdx = 0
+			m = updateMemberTree(m)
 		}
 		return m, nil
 
@@ -359,6 +375,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showDetail = !m.showDetail
 			return m, nil
 
+		case "?":
+			m.help.ShowAll = !m.help.ShowAll
+			return m, nil
+
 		case "e":
 			file, line := m.currentRef()
 			if file == "" {
@@ -402,14 +422,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				default:
 					m.group = GroupPkg
 				}
-				m = updateTree(m)
+				if m.view == viewStruct {
+					m = updateMemberTree(m)
+				} else {
+					m = updateTree(m)
+				}
 			}
 			return m, nil
 
 		case "f":
 			if m.result != nil {
 				m.violOnly = !m.violOnly
-				m = updateTree(m)
+				if m.view == viewStruct {
+					m = updateMemberTree(m)
+				} else {
+					m = updateTree(m)
+				}
 			}
 			return m, nil
 
@@ -426,6 +454,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.view == viewStruct {
 					if m.structIdx < len(m.structMembers)-1 {
 						m.structIdx++
+						m = updateMemberTree(m)
 					}
 				} else if m.listIdx < len(m.symbols)-1 {
 					m.listIdx++
@@ -444,6 +473,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.view == viewStruct {
 					if m.structIdx > 0 {
 						m.structIdx--
+						m = updateMemberTree(m)
 					}
 				} else if m.listIdx > 0 {
 					m.listIdx--
@@ -477,6 +507,24 @@ func buildSymbolList(m Model) Model {
 }
 
 
+func updateMemberTree(m Model) Model {
+	if m.structIdx >= len(m.structMembers) {
+		m.treeLines = nil
+		m.treeRefs = nil
+		return m
+	}
+	violPkgs := map[string]bool{}
+	if m.result != nil {
+		for _, v := range m.result.Violations {
+			violPkgs[v.FromPkg] = true
+		}
+	}
+	edges := m.structMembers[m.structIdx].Edges
+	m.treeLines, m.treeRefs = buildTreeLines(edges, 0, m.group, m.violOnly, violPkgs, m.shortPkg)
+	m.treeIdx = 0
+	return m
+}
+
 func updateTree(m Model) Model {
 	if m.result == nil || len(m.symbols) == 0 {
 		m.treeLines = nil
@@ -504,20 +552,22 @@ func (m Model) View() string {
 		return lipgloss.JoinVertical(lipgloss.Left, searchBar, "", loadLine, "", styleHelp.Render("[ctrl+q] quit"))
 	}
 
-	help := m.renderHelpBar()
+	helpView := m.help.View(m.keys)
+	helpH := lipgloss.Height(helpView)
 
-	// Reserve rows: 1 search + 1 help + dropdown (when in search mode).
-	// The detail panel is overlaid on the body, not stacked.
 	dropdownH := 0
 	if m.inputMode && len(m.searchResults) > 0 {
 		dropdownH = min(len(m.searchResults), 10)
 	}
-	contentH := m.height - 2 - dropdownH
+	contentH := m.height - 1 - helpH - dropdownH
 	if contentH < 2 {
 		contentH = 2
 	}
 
 	leftW := m.width / 3
+	if leftW < 20 {
+		leftW = 20
+	}
 	rightW := m.width - leftW
 	if rightW < 8 {
 		rightW = 8
@@ -534,7 +584,7 @@ func (m Model) View() string {
 	if dropdownH > 0 {
 		parts = append(parts, m.renderSearchDropdown(dropdownH))
 	}
-	parts = append(parts, body, help)
+	parts = append(parts, body, helpView)
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
@@ -598,16 +648,11 @@ func (m Model) renderList(w, h int) string {
 		title = styleTitle.Render(title)
 	}
 
-	lines := make([]string, 0, h)
-	lines = append(lines, padRight(title, w))
-
+	lines := make([]string, 0, len(m.symbols))
 	for i, s := range m.symbols {
-		if len(lines) >= h {
-			break
-		}
 		pkgSeg := s.sym.Package
-		if i := strings.LastIndex(pkgSeg, "/"); i >= 0 {
-			pkgSeg = pkgSeg[i+1:]
+		if j := strings.LastIndex(pkgSeg, "/"); j >= 0 {
+			pkgSeg = pkgSeg[j+1:]
 		}
 		label := fmt.Sprintf("%s.%s (%s) [%d]", pkgSeg, s.sym.Name, s.sym.Kind, s.refCount)
 		label = truncate(label, w-1)
@@ -620,11 +665,11 @@ func (m Model) renderList(w, h int) string {
 			lines = append(lines, styleItem.Render(padRight(label, w)))
 		}
 	}
-
-	for len(lines) < h {
-		lines = append(lines, strings.Repeat(" ", w))
-	}
-	return strings.Join(lines, "\n")
+	m.listVP.Width = w
+	m.listVP.Height = h - 1
+	m.listVP.SetContent(strings.Join(lines, "\n"))
+	ensureVisible(&m.listVP, m.listIdx)
+	return lipgloss.JoinVertical(lipgloss.Left, padRight(title, w), m.listVP.View())
 }
 
 func (m Model) renderStructList(w, h int) string {
@@ -634,52 +679,54 @@ func (m Model) renderStructList(w, h int) string {
 	} else {
 		title = styleTitle.Render(title)
 	}
-
-	lines := make([]string, 0, h)
-	lines = append(lines, padRight(title, w))
-
 	if m.structMembers == nil {
-		lines = append(lines, styleHelp.Render("  loading..."))
-		for len(lines) < h {
-			lines = append(lines, strings.Repeat(" ", w))
-		}
-		return strings.Join(lines, "\n")
+		return lipgloss.JoinVertical(lipgloss.Left, padRight(title, w), styleHelp.Render("  loading..."))
 	}
 	if len(m.structMembers) == 0 {
-		lines = append(lines, styleHelp.Render("  (no exported members)"))
-		for len(lines) < h {
-			lines = append(lines, strings.Repeat(" ", w))
-		}
-		return strings.Join(lines, "\n")
+		return lipgloss.JoinVertical(lipgloss.Left, padRight(title, w), styleHelp.Render("  (no exported members)"))
 	}
 
+	labels := make([]string, len(m.structMembers))
 	for i, mem := range m.structMembers {
-		if len(lines) >= h {
-			break
-		}
-		var label string
+		kind := styleDim.Render(" (" + mem.Kind + ")")
+		var body string
 		switch mem.Kind {
 		case "method":
-			label = fmt.Sprintf(" |-%s%s (func)", mem.Name, mem.Signature)
+			body = mem.Name + styleDim.Render(mem.Signature)
 		case "field":
-			label = fmt.Sprintf(" |-%s:%s (field)", mem.Name, mem.Type)
+			body = mem.Name + styleDim.Render(":"+mem.Type)
 		default:
-			label = " |-" + mem.Name
+			body = mem.Name
 		}
-		label = truncate(label, w-1)
-		switch {
-		case i == m.structIdx && m.active == paneList:
-			lines = append(lines, styleSelected.Width(w).Render(label))
-		case i == m.structIdx:
-			lines = append(lines, styleCurrent.Render(padRight(label, w)))
-		default:
-			lines = append(lines, styleItem.Render(padRight(label, w)))
+		refN := ""
+		if n := len(mem.Edges); n > 0 {
+			refN = styleDim.Render(fmt.Sprintf(" [%d]", n))
 		}
+		labels[i] = body + kind + refN
 	}
-	for len(lines) < h {
-		lines = append(lines, strings.Repeat(" ", w))
+
+	selIdx := m.structIdx
+	active := m.active == paneList
+	t := tree.New().Root(m.structName).Enumerator(tree.RoundedEnumerator)
+	for _, lbl := range labels {
+		t.Child(lbl)
 	}
-	return strings.Join(lines, "\n")
+	t.ItemStyleFunc(func(_ tree.Children, i int) lipgloss.Style {
+		if i == selIdx && active {
+			return lipgloss.NewStyle().Background(lipgloss.Color("63")).Foreground(lipgloss.Color("230"))
+		}
+		if i == selIdx {
+			return lipgloss.NewStyle().Bold(true)
+		}
+		return lipgloss.NewStyle()
+	})
+
+	content := t.String()
+	m.listVP.Width = w
+	m.listVP.Height = h - 1
+	m.listVP.SetContent(content)
+	ensureVisible(&m.listVP, selIdx+1) // +1 accounts for root line
+	return lipgloss.JoinVertical(lipgloss.Left, padRight(title, w), m.listVP.View())
 }
 
 func (m Model) renderTree(w, h int) string {
@@ -697,25 +744,20 @@ func (m Model) renderTree(w, h int) string {
 		titleStr = styleTitle.Render(titleStr)
 	}
 
-	lines := make([]string, 0, h)
-	lines = append(lines, padRight(titleStr, w))
-
-	visible := m.treeLines
-	if m.treeIdx > 0 && m.treeIdx < len(visible) {
-		visible = visible[m.treeIdx:]
-	}
-
-	for _, line := range visible {
-		if len(lines) >= h {
-			break
+	lines := make([]string, len(m.treeLines))
+	for i, line := range m.treeLines {
+		line = truncate(line, w-1)
+		if i == m.treeIdx && m.active == paneTree {
+			lines[i] = styleSelected.Width(w).Render(line)
+		} else {
+			lines[i] = line
 		}
-		lines = append(lines, truncate(line, w-1))
 	}
-
-	for len(lines) < h {
-		lines = append(lines, strings.Repeat(" ", w))
-	}
-	return strings.Join(lines, "\n")
+	m.treeVP.Width = w
+	m.treeVP.Height = h - 1
+	m.treeVP.SetContent(strings.Join(lines, "\n"))
+	ensureVisible(&m.treeVP, m.treeIdx)
+	return lipgloss.JoinVertical(lipgloss.Left, padRight(titleStr, w), m.treeVP.View())
 }
 
 func (m Model) renderDetailPanel() string {
@@ -758,43 +800,6 @@ func (m Model) renderDetailPanel() string {
 	return lipgloss.JoinVertical(lipgloss.Left, append([]string{sep}, cols...)...)
 }
 
-func (m Model) renderHelpBar() string {
-	if m.inputMode {
-		return styleHelp.Render("[Enter] search  [Esc] cancel")
-	}
-	violStr := "off"
-	if m.violOnly {
-		violStr = "on"
-	}
-	groupStr := "pkg"
-	switch m.group {
-	case GroupFile:
-		groupStr = "file"
-	case GroupFunc:
-		groupStr = "func"
-	}
-	detailStr := "off"
-	if m.showDetail {
-		detailStr = "on"
-	}
-	modStr := "off"
-	if m.moduleOnly {
-		modStr = "on"
-	}
-	parts := []string{
-		"[/] search",
-		"[hjkl] navigate",
-		"[esc] back",
-		"[g] group=" + groupStr,
-		"[f] violations=" + violStr,
-		"[m] module-only=" + modStr,
-		"[i] detail=" + detailStr,
-		"[e] open",
-		"[q] quit",
-	}
-	return styleHelp.Render(strings.Join(parts, "  "))
-}
-
 // currentRef returns the file and line for the focused element.
 func (m Model) currentRef() (file string, line int) {
 	switch m.active {
@@ -833,6 +838,21 @@ func (m Model) shortPkg(p string) string {
 		return p[len(m.modulePrefix)+1:]
 	}
 	return p
+}
+
+// ensureVisible scrolls vp so that line `idx` (zero-based in the content) is within view.
+func ensureVisible(vp *viewport.Model, idx int) {
+	if vp.Height <= 0 {
+		return
+	}
+	if idx < vp.YOffset {
+		vp.YOffset = idx
+	} else if idx >= vp.YOffset+vp.Height {
+		vp.YOffset = idx - vp.Height + 1
+	}
+	if vp.YOffset < 0 {
+		vp.YOffset = 0
+	}
 }
 
 // overlayBottom renders panel on top of the last lines of base.

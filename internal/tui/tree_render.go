@@ -23,9 +23,13 @@ func buildTreeLines(
 		shortPkg = func(s string) string { return s }
 	}
 	var relevant []graph.Edge
-	for _, e := range edges {
-		if e.Callee == symID {
-			relevant = append(relevant, e)
+	if symID == 0 {
+		relevant = edges
+	} else {
+		for _, e := range edges {
+			if e.Callee == symID {
+				relevant = append(relevant, e)
+			}
 		}
 	}
 	if len(relevant) == 0 {

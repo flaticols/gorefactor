@@ -126,6 +126,57 @@ func WalkRefs(targetPkg string, importerPaths []string, cfg Config, startID int)
 	return result, nil
 }
 
+// WalkMemberRefs finds references to exported methods and fields of pkgPath.typeName
+// across importer packages. Returns map[memberName][]Edge.
+func WalkMemberRefs(pkgPath, typeName string, importerPaths []string, cfg Config) (map[string][]graph.Edge, error) {
+	out := make(map[string][]graph.Edge)
+	if len(importerPaths) == 0 {
+		return out, nil
+	}
+	pkgs, err := packages.Load(&packages.Config{
+		Mode: packages.NeedName | packages.NeedSyntax | packages.NeedTypes |
+			packages.NeedTypesInfo | packages.NeedImports,
+		Dir:   cfg.Dir,
+		Tests: cfg.Tests,
+	}, importerPaths...)
+	if err != nil {
+		return nil, err
+	}
+	for _, ipkg := range pkgs {
+		if ipkg.TypesInfo == nil {
+			continue
+		}
+		for selExpr, sel := range ipkg.TypesInfo.Selections {
+			recv := sel.Recv()
+			if ptr, ok := recv.(*types.Pointer); ok {
+				recv = ptr.Elem()
+			}
+			named, ok := recv.(*types.Named)
+			if !ok || named.Obj() == nil || named.Obj().Pkg() == nil {
+				continue
+			}
+			if named.Obj().Pkg().Path() != pkgPath || named.Obj().Name() != typeName {
+				continue
+			}
+			memName := sel.Obj().Name()
+			pos := ipkg.Fset.Position(selExpr.Sel.Pos())
+			kind := graph.EdgeRead
+			if _, isFunc := sel.Obj().(*types.Func); isFunc {
+				kind = graph.EdgeCall
+			}
+			out[memName] = append(out[memName], graph.Edge{
+				Kind:       kind,
+				CallerPkg:  ipkg.PkgPath,
+				CallerFunc: enclosingFuncName(ipkg.Fset, ipkg.Syntax, selExpr.Pos()),
+				File:       cleanPath(cfg.Dir, pos.Filename),
+				Line:       pos.Line,
+				Col:        pos.Column,
+			})
+		}
+	}
+	return out, nil
+}
+
 // enclosingFuncName returns "FuncName" or "(*Recv).Method" for the innermost
 // function/method declaration containing pos. Returns "" for package-level or
 // init code where no enclosing named function exists.

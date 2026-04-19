@@ -136,6 +136,7 @@ type StructMember struct {
 	Type      string // for fields: type string; for methods: result type
 	File      string
 	Line      int
+	Edges     []graph.Edge // references to this member across importer packages
 }
 
 // LoadStructMembers returns the exported methods and (for struct types) fields
@@ -201,6 +202,20 @@ func LoadStructMembers(cfg Config, pkgPath, typeName string) ([]StructMember, er
 			File:      relPath(cfg.Loader.Dir, pos.Filename),
 			Line:      pos.Line,
 		})
+	}
+
+	// Collect references to each member across importer packages and attach.
+	if pg, perr := loader.BuildPackageGraph(cfg.Loader); perr == nil {
+		importers := pg.ImportersOf(pkgPath)
+		paths := make([]string, len(importers))
+		for i, n := range importers {
+			paths[i] = n.Path
+		}
+		if refs, err := loader.WalkMemberRefs(pkgPath, typeName, paths, cfg.Loader); err == nil {
+			for i := range members {
+				members[i].Edges = refs[members[i].Name]
+			}
+		}
 	}
 
 	return members, nil
