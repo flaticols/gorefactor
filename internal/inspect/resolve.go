@@ -34,6 +34,8 @@ type Config struct {
 
 // ResolveTarget parses target, loads T1+T2 data, and returns an InspectResult.
 // target may be a package path, "pkg.Symbol", or "pkg.Receiver.Method".
+// If target contains no "/" it is treated as a suffix and matched against all
+// known packages (e.g. "graph" matches "go.flaticols.dev/gorefactor/internal/graph").
 func ResolveTarget(target string, cfg Config) (*InspectResult, error) {
 	target = strings.TrimSpace(target)
 	pkgPath, symbolName, _ := ParseTarget(target) // method-level filtering not yet implemented
@@ -44,6 +46,14 @@ func ResolveTarget(target string, cfg Config) (*InspectResult, error) {
 	pg, err := loader.BuildPackageGraph(cfg.Loader)
 	if err != nil {
 		return nil, err
+	}
+
+	// Suffix match: if pkgPath has no "/" resolve it to the first package whose
+	// path ends with "/"+pkgPath or equals pkgPath exactly.
+	if !strings.Contains(pkgPath, "/") {
+		if resolved := suffixMatch(pkgPath, pg.AllPaths()); resolved != "" {
+			pkgPath = resolved
+		}
 	}
 
 	importers := pg.ImportersOf(pkgPath)
@@ -104,6 +114,16 @@ func ResolveTarget(target string, cfg Config) (*InspectResult, error) {
 		PkgGraph:   pg,
 		Violations: viols,
 	}, nil
+}
+
+// suffixMatch returns the first path in paths that ends with "/"+suffix or equals suffix.
+func suffixMatch(suffix string, paths []string) string {
+	for _, p := range paths {
+		if p == suffix || strings.HasSuffix(p, "/"+suffix) {
+			return p
+		}
+	}
+	return ""
 }
 
 // ParseTarget splits a qualified target into package path, symbol name, and method name.

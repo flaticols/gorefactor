@@ -24,8 +24,7 @@ const (
 type pane int
 
 const (
-	paneSearch pane = iota
-	paneList
+	paneList pane = iota
 	paneTree
 )
 
@@ -42,12 +41,14 @@ type loadDoneMsg struct {
 }
 
 // Model is the Bubble Tea model for the inspect TUI.
+// Navigation is modal: normal mode uses vim keys; "/" enters search/insert mode.
 type Model struct {
 	cfg    inspect.Config
 	result *inspect.InspectResult
 
-	input   textinput.Model
-	spinner spinner.Model
+	input     textinput.Model
+	spinner   spinner.Model
+	inputMode bool // true = search/insert mode, false = normal mode
 
 	symbols []symbolEntry
 	listIdx int
@@ -68,20 +69,25 @@ type Model struct {
 // New creates a Model with an optional pre-filled search target.
 func New(initialTarget string, cfg inspect.Config) Model {
 	ti := textinput.New()
-	ti.Placeholder = "package/symbol (e.g. github.com/acme/tasks)"
+	ti.Placeholder = "/ to search  (e.g. tasks  or  github.com/acme/tasks)"
 	ti.SetValue(initialTarget)
-	ti.Focus()
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
-	return Model{
-		cfg:     cfg,
-		input:   ti,
-		spinner: sp,
-		active:  paneSearch,
-		loading: strings.TrimSpace(initialTarget) != "",
+	hasTarget := strings.TrimSpace(initialTarget) != ""
+	m := Model{
+		cfg:       cfg,
+		input:     ti,
+		spinner:   sp,
+		active:    paneList,
+		loading:   hasTarget,
+		inputMode: hasTarget, // start in search mode when target pre-filled
 	}
+	if hasTarget {
+		m.input.Focus()
+	}
+	return m
 }
 
 // Run starts the full-screen Bubble Tea TUI. Blocks until the user quits.
@@ -118,6 +124,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case loadDoneMsg:
 		m.loading = false
+		m.inputMode = false
+		m.input.Blur()
 		if msg.err != nil {
 			m.err = msg.err
 			return m, nil
@@ -126,10 +134,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.result = msg.result
 		m = buildSymbolList(m)
 		m = updateTree(m)
-		if m.active == paneSearch && len(m.symbols) > 0 {
-			m.active = paneList
-			m.input.Blur()
-		}
+		m.active = paneList
 		return m, nil
 
 	case spinner.TickMsg:
@@ -141,31 +146,66 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Global keys always handled first.
 		switch msg.String() {
 		case "ctrl+c", "ctrl+q":
 			return m, tea.Quit
+		}
 
-		case "q":
-			if m.active == paneSearch {
-				return m, tea.Quit
+		// Search/insert mode: all keystrokes go to textinput.
+		if m.inputMode {
+			switch msg.String() {
+			case "esc":
+				m.inputMode = false
+				m.input.Blur()
+				return m, nil
+			case "enter":
+				q := strings.TrimSpace(m.input.Value())
+				if q != "" {
+					m.loading = true
+					m.err = nil
+					m.inputMode = false
+					m.input.Blur()
+					return m, tea.Batch(doLoad(q, m.cfg), m.spinner.Tick)
+				}
+				m.inputMode = false
+				m.input.Blur()
+				return m, nil
+			default:
+				var cmd tea.Cmd
+				m.input, cmd = m.input.Update(msg)
+				return m, cmd
 			}
-			m.active = paneSearch
+		}
+
+		// Normal mode: vim-style commands.
+		switch msg.String() {
+		case "q":
+			return m, tea.Quit
+
+		case "/":
+			m.inputMode = true
 			m.input.Focus()
 			return m, nil
 
-		case "tab":
-			m = cyclePane(m)
+		case "tab", "l":
+			if m.active == paneList {
+				m.active = paneTree
+			} else {
+				m.active = paneList
+			}
 			return m, nil
 
-		case "esc":
-			if m.active != paneSearch {
-				m.active = paneSearch
-				m.input.Focus()
+		case "shift+tab", "h":
+			if m.active == paneTree {
+				m.active = paneList
+			} else {
+				m.active = paneTree
 			}
 			return m, nil
 
 		case "g":
-			if m.active != paneSearch && m.result != nil {
+			if m.result != nil {
 				if m.group == GroupPkg {
 					m.group = GroupFile
 				} else {
@@ -176,73 +216,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "f":
-			if m.active != paneSearch && m.result != nil {
+			if m.result != nil {
 				m.violOnly = !m.violOnly
 				m = updateTree(m)
 			}
 			return m, nil
 
-		case "enter":
-			if m.active == paneSearch {
-				q := strings.TrimSpace(m.input.Value())
-				if q != "" {
-					m.loading = true
-					m.err = nil
-					return m, tea.Batch(doLoad(q, m.cfg), m.spinner.Tick)
-				}
-			}
-			return m, nil
-		}
-
-		// Per-pane navigation
-		switch m.active {
-		case paneSearch:
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(msg)
-			return m, cmd
-		case paneList:
-			switch msg.String() {
-			case "up", "k":
-				if m.listIdx > 0 {
-					m.listIdx--
-					m = updateTree(m)
-				}
-			case "down", "j":
+		case "j", "down":
+			switch m.active {
+			case paneList:
 				if m.listIdx < len(m.symbols)-1 {
 					m.listIdx++
 					m = updateTree(m)
 				}
-			}
-		case paneTree:
-			switch msg.String() {
-			case "up", "k":
-				if m.treeIdx > 0 {
-					m.treeIdx--
-				}
-			case "down", "j":
+			case paneTree:
 				if m.treeIdx < len(m.treeLines)-1 {
 					m.treeIdx++
 				}
 			}
+			return m, nil
+
+		case "k", "up":
+			switch m.active {
+			case paneList:
+				if m.listIdx > 0 {
+					m.listIdx--
+					m = updateTree(m)
+				}
+			case paneTree:
+				if m.treeIdx > 0 {
+					m.treeIdx--
+				}
+			}
+			return m, nil
 		}
 	}
 	return m, nil
-}
-
-func cyclePane(m Model) Model {
-	switch m.active {
-	case paneSearch:
-		if len(m.symbols) > 0 {
-			m.active = paneList
-			m.input.Blur()
-		}
-	case paneList:
-		m.active = paneTree
-	case paneTree:
-		m.active = paneSearch
-		m.input.Focus()
-	}
-	return m
 }
 
 func buildSymbolList(m Model) Model {
@@ -311,11 +320,15 @@ func (m Model) View() string {
 }
 
 func (m Model) renderSearch() string {
-	label := "Search"
-	if m.active == paneSearch {
-		label = styleActive.Render(label)
+	prefix := "  "
+	if m.inputMode {
+		prefix = styleActive.Render("/") + " "
+		return prefix + m.input.View()
 	}
-	return label + ": " + m.input.View()
+	if m.result != nil {
+		return prefix + styleDim.Render(m.result.Target) + styleHelp.Render("  / to search")
+	}
+	return prefix + styleHelp.Render("Press / to search")
 }
 
 func (m Model) renderList(w, h int) string {
@@ -419,6 +432,9 @@ func (m Model) renderDetail(w, h int) string {
 }
 
 func (m Model) renderHelpBar() string {
+	if m.inputMode {
+		return styleHelp.Render("[Enter] search  [Esc] cancel")
+	}
 	violStr := "off"
 	if m.violOnly {
 		violStr = "on"
@@ -428,13 +444,11 @@ func (m Model) renderHelpBar() string {
 		groupStr = "file"
 	}
 	parts := []string{
-		"[Tab] pane",
-		"[↑↓/jk] nav",
-		"[Enter] load",
+		"[/] search",
+		"[hjkl] navigate",
 		"[g] group=" + groupStr,
 		"[f] violations=" + violStr,
-		"[Esc] search",
-		"[q] back/quit",
+		"[q] quit",
 	}
 	return styleHelp.Render(strings.Join(parts, "  "))
 }
