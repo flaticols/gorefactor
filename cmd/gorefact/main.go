@@ -47,6 +47,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "validate-rules":
 		return runValidateRules(args[1:], stdout, stderr)
 	default:
+		// If the first arg looks like a package path or dir, treat as inspect target.
+		if looksLikeTarget(args[0]) {
+			return runInspect(args, stdout, stderr)
+		}
 		fmt.Fprintf(stderr, "unknown subcommand %q\n\n", args[0])
 		printRootHelp(stderr)
 		return 2
@@ -367,6 +371,12 @@ func title(stage string) string {
 	default:
 		return filepath.Clean(stage)
 	}
+}
+
+// looksLikeTarget returns true when s looks like a package path or dir rather
+// than a subcommand name: starts with "." or "/", or contains a "/".
+func looksLikeTarget(s string) bool {
+	return strings.HasPrefix(s, ".") || strings.HasPrefix(s, "/") || strings.Contains(s, "/")
 }
 
 func resolvePath(baseDir, path string) string {
