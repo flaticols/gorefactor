@@ -80,6 +80,7 @@ func New(initialTarget string, cfg inspect.Config) Model {
 		input:   ti,
 		spinner: sp,
 		active:  paneSearch,
+		loading: strings.TrimSpace(initialTarget) != "",
 	}
 }
 
@@ -94,7 +95,6 @@ func Run(initialTarget string, cfg inspect.Config) error {
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{textinput.Blink}
 	if strings.TrimSpace(m.input.Value()) != "" {
-		m.loading = true
 		cmds = append(cmds, doLoad(m.input.Value(), m.cfg), m.spinner.Tick)
 	}
 	return tea.Batch(cmds...)
