@@ -2,15 +2,15 @@
 # Do not edit manually — changes will be overwritten.
 { lib, stdenvNoCC, fetchurl }:
 let
-  version = "0.0.17";
+  version = "0.0.18";
   tarballs = {
     "aarch64-darwin" = fetchurl {
       url = "https://github.com/flaticols/gorefactor/releases/download/v${version}/gorefact_Darwin_arm64.tar.gz";
-      hash = "sha256-x6PYqumqwxRvxW38RthXKaOi9OFrBmJEnedc4YV3bdI="; # arm
+      hash = "sha256-hWDPMhqLF4IAnkhXj09VVTvtLm9nZaDuffMo6vV8XtI="; # arm
     };
     "x86_64-darwin" = fetchurl {
       url = "https://github.com/flaticols/gorefactor/releases/download/v${version}/gorefact_Darwin_x86_64.tar.gz";
-      hash = "sha256-y0P2KWKzMMkJdntBo4bX1ezlXr/KAH2zlpSyu/i46sc="; # x86
+      hash = "sha256-adoBHvA/70i0HU91DKlPjh9GlxF4cGCRsYx6cfZ/1yQ="; # x86
     };
   };
 in
