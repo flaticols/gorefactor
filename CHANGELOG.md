@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.11] - 2026-04-19
+
+### Changed
+- Search results exclude stdlib and `golang.org/` / `google.golang.org/` / `gopkg.in/` packages to reduce noise
+
 ## [0.0.10] - 2026-04-19
 
 ### Added
