@@ -360,6 +360,10 @@ func title(stage string) string {
 		return "Building call graph"
 	case "done":
 		return "Done"
+	case "loading package graph":
+		return "Loading package graph"
+	case "walking references":
+		return "Walking references"
 	default:
 		return filepath.Clean(stage)
 	}

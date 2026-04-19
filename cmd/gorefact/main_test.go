@@ -225,6 +225,69 @@ func TestRunUnknownSubcommand(t *testing.T) {
 	}
 }
 
+func TestRunInspect_HelpFlag(t *testing.T) {
+	var out, errOut strings.Builder
+	code := run([]string{"inspect", "-h"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr: %s", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "gorefact inspect") {
+		t.Errorf("help output missing usage line: %s", errOut.String())
+	}
+}
+
+func TestRunHelp_InspectTopic(t *testing.T) {
+	var out, errOut strings.Builder
+	code := run([]string{"help", "inspect"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr: %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "gorefact inspect") {
+		t.Errorf("help inspect missing: %s", out.String())
+	}
+}
+
+func TestRunInspect_NoTUI_Text(t *testing.T) {
+	dir := t.TempDir()
+	// Write a minimal two-package module so inspect has real data to walk.
+	mustWriteFile(t, filepath.Join(dir, "go.mod"), "module example.com/testmod\n\ngo 1.26.2\n")
+	mustWriteFile(t, filepath.Join(dir, "alpha", "alpha.go"), `package alpha
+
+type Widget struct{}
+`)
+	mustWriteFile(t, filepath.Join(dir, "beta", "beta.go"), `package beta
+
+import "example.com/testmod/alpha"
+
+func Make() alpha.Widget { return alpha.Widget{} }
+`)
+
+	var out, errOut strings.Builder
+	code := run([]string{
+		"inspect",
+		"--no-tui",
+		"--format", "text",
+		"--dir", dir,
+		"example.com/testmod/alpha",
+	}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr: %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "example.com/testmod/alpha") {
+		t.Errorf("output missing target package: %s", out.String())
+	}
+}
+
+func mustWriteFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+}
+
 func writeFile(t *testing.T, path, contents string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
