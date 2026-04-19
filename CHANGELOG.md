@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.17] - 2026-04-19
+
+### Fixed
+- Intra-package references are now included in both the symbol reference tree and per-member reference tree: the target package is added to the walk set alongside its importers (previously only importers were walked, so same-pkg uses were silently missing)
+
 ## [0.0.16] - 2026-04-19
 
 ### Added

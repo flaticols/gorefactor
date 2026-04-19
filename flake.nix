@@ -15,7 +15,7 @@
         # Build from source — useful for development or patching.
         source = pkgs.buildGoModule rec {
           pname = "gorefact";
-          version = "0.0.16";
+          version = "0.0.17";
           src = ./.;
           go = pkgs.go;
           ldflags = [ "-s" "-w" "-X main.Version=${version}" ];

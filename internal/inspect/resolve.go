@@ -60,10 +60,12 @@ func ResolveTarget(target string, cfg Config) (*InspectResult, error) {
 	}
 
 	importers := pg.ImportersOf(pkgPath)
-	importerPaths := make([]string, len(importers))
-	for i, n := range importers {
-		importerPaths[i] = n.Path
+	importerPaths := make([]string, 0, len(importers)+1)
+	for _, n := range importers {
+		importerPaths = append(importerPaths, n.Path)
 	}
+	// Also walk the target package itself so intra-package references are captured.
+	importerPaths = append(importerPaths, pkgPath)
 
 	if cfg.Loader.Progress != nil {
 		cfg.Loader.Progress("walking references")
@@ -204,13 +206,15 @@ func LoadStructMembers(cfg Config, pkgPath, typeName string) ([]StructMember, er
 		})
 	}
 
-	// Collect references to each member across importer packages and attach.
+	// Collect references to each member across importer packages and the
+	// target package itself (so intra-package refs are included) and attach.
 	if pg, perr := loader.BuildPackageGraph(cfg.Loader); perr == nil {
 		importers := pg.ImportersOf(pkgPath)
-		paths := make([]string, len(importers))
-		for i, n := range importers {
-			paths[i] = n.Path
+		paths := make([]string, 0, len(importers)+1)
+		for _, n := range importers {
+			paths = append(paths, n.Path)
 		}
+		paths = append(paths, pkgPath)
 		if refs, err := loader.WalkMemberRefs(pkgPath, typeName, paths, cfg.Loader); err == nil {
 			for i := range members {
 				members[i].Edges = refs[members[i].Name]
