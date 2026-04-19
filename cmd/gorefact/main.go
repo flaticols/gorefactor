@@ -26,11 +26,16 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
+		if isTTY() {
+			return runInspect(nil, stdout, stderr)
+		}
 		printRootHelp(stderr)
 		return 2
 	}
 
 	switch args[0] {
+	case "inspect":
+		return runInspect(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		return runHelp(args[1:], stdout, stderr)
 	case "check":
@@ -240,6 +245,9 @@ func runHelp(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	switch strings.TrimSpace(args[0]) {
+	case "inspect":
+		printInspectHelp(stdout)
+		return 0
 	case "check":
 		printCheckHelp(stdout)
 		return 0
@@ -266,6 +274,7 @@ func printRootHelp(w io.Writer) {
 	fmt.Fprintln(w, "  gorefact <command> [flags] [packages...]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Commands:")
+	fmt.Fprintln(w, "  inspect         show what imports or references a package/symbol (TUI or text)")
 	fmt.Fprintln(w, "  check           build the graph and report rule violations")
 	fmt.Fprintln(w, "  serve           start the JSON-RPC server for the Neovim plugin")
 	fmt.Fprintln(w, "  validate-rules  parse and validate a rules file without loading packages")
