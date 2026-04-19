@@ -36,7 +36,7 @@ type Config struct {
 // target may be a package path, "pkg.Symbol", or "pkg.Receiver.Method".
 func ResolveTarget(target string, cfg Config) (*InspectResult, error) {
 	target = strings.TrimSpace(target)
-	pkgPath, symbolName, _ := ParseTarget(target)
+	pkgPath, symbolName, _ := ParseTarget(target) // method-level filtering not yet implemented
 
 	if cfg.Loader.Progress != nil {
 		cfg.Loader.Progress("loading package graph")

@@ -7,6 +7,7 @@ import (
 
 	"go.flaticols.dev/gorefactor/internal/inspect"
 	"go.flaticols.dev/gorefactor/internal/loader"
+	"go.flaticols.dev/gorefactor/internal/rules"
 )
 
 func writeFile(t *testing.T, path, contents string) {
@@ -112,5 +113,35 @@ func Run() alpha.Engine { return alpha.NewEngine() }
 		if s.Name != "Engine" {
 			t.Errorf("unexpected symbol %q in filtered result", s.Name)
 		}
+	}
+}
+
+func TestResolveTarget_Violations(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.26.2\n")
+	writeFile(t, filepath.Join(dir, "alpha", "alpha.go"), `package alpha
+
+type Engine struct{}
+`)
+	writeFile(t, filepath.Join(dir, "beta", "beta.go"), `package beta
+
+import "example.com/test/alpha"
+
+func Run() alpha.Engine { return alpha.Engine{} }
+`)
+
+	cfg := inspect.Config{
+		Loader: loader.Config{Dir: dir, Patterns: []string{"./..."}},
+		Rules:  []rules.Rule{{From: "beta", To: "alpha", Reason: "test rule"}},
+	}
+	res, err := inspect.ResolveTarget("example.com/test/alpha", cfg)
+	if err != nil {
+		t.Fatalf("ResolveTarget error = %v", err)
+	}
+	if len(res.Violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d", len(res.Violations))
+	}
+	if res.Violations[0].FromPkg != "example.com/test/beta" {
+		t.Errorf("violation FromPkg = %q", res.Violations[0].FromPkg)
 	}
 }
