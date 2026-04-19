@@ -452,9 +452,3 @@ func padRight(s string, w int) string {
 	}
 	return s + strings.Repeat(" ", w-len(s))
 }
-
-// buildTreeLines is defined in tree_render.go (Task 7).
-// Temporary stub so this file compiles independently.
-func buildTreeLines(edges []graph.Edge, symID int, group GroupMode, violOnly bool, violPkgs map[string]bool) []string {
-	return []string{"(loading tree renderer...)"}
-}
