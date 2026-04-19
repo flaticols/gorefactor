@@ -48,8 +48,9 @@ func (pg *PackageGraph) AllPaths() []string {
 // Fast enough for 90K-function services.
 func BuildPackageGraph(cfg Config) (*PackageGraph, error) {
 	pkgs, err := packages.Load(&packages.Config{
-		Mode: packages.NeedName | packages.NeedImports | packages.NeedModule,
-		Dir:  cfg.Dir,
+		Mode:  packages.NeedName | packages.NeedImports | packages.NeedModule,
+		Dir:   cfg.Dir,
+		Tests: cfg.Tests,
 	}, cfg.patterns()...)
 	if err != nil {
 		return nil, err
