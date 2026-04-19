@@ -67,6 +67,9 @@ type Result struct {
 }
 
 // Load runs T1 always. When depth == DepthFull, also runs T3 (SSA/CHA).
+// Note: DepthFull triggers a second packages.Load internally (SSA). The T1
+// result is still populated for callers that need the package import graph
+// (e.g. the inspect command). The check/serve commands only use res.Graph.
 func Load(cfg Config, depth Depth) (*Result, error) {
 	cfg.progress("loading package graph")
 	pg, err := BuildPackageGraph(cfg)

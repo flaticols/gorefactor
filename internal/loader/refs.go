@@ -1,8 +1,6 @@
 package loader
 
 import (
-	"go/ast"
-	"go/token"
 	"go/types"
 	"sort"
 
@@ -154,20 +152,3 @@ func classifyRef(obj types.Object) graph.EdgeKind {
 	return graph.EdgeRead
 }
 
-// enclosingFuncDecl returns the innermost *ast.FuncDecl covering pos, or nil.
-func enclosingFuncDecl(file *ast.File, pos token.Pos) *ast.FuncDecl {
-	var result *ast.FuncDecl
-	ast.Inspect(file, func(n ast.Node) bool {
-		if n == nil {
-			return false
-		}
-		if n.Pos() > pos || n.End() < pos {
-			return false
-		}
-		if fd, ok := n.(*ast.FuncDecl); ok {
-			result = fd
-		}
-		return true
-	})
-	return result
-}
