@@ -6,6 +6,7 @@ import (
 	"go.flaticols.dev/gorefactor/internal/graph"
 	"go.flaticols.dev/gorefactor/internal/loader"
 	"go.flaticols.dev/gorefactor/internal/rules"
+	"golang.org/x/tools/go/packages"
 )
 
 // InspectResult holds the resolved reference data for a target.
@@ -123,6 +124,52 @@ func ListPackages(cfg Config) ([]string, error) {
 		return nil, err
 	}
 	return pg.AllPaths(), nil
+}
+
+// LoadAllSymbols enumerates every exported symbol across all workspace packages.
+// It uses NeedTypes (no SSA) so it is significantly faster than a full T2 load,
+// but still slower than T1 — run it in a background goroutine.
+func LoadAllSymbols(cfg Config) ([]graph.Symbol, error) {
+	patterns := cfg.Loader.Patterns
+	if len(patterns) == 0 {
+		patterns = []string{"./..."}
+	}
+	pkgs, err := packages.Load(&packages.Config{
+		Mode:  packages.NeedName | packages.NeedTypes | packages.NeedModule,
+		Dir:   cfg.Loader.Dir,
+		Tests: cfg.Loader.Tests,
+	}, patterns...)
+	if err != nil {
+		return nil, err
+	}
+
+	var syms []graph.Symbol
+	id := 1
+	for _, pkg := range pkgs {
+		if pkg.Types == nil || pkg.PkgPath == "" {
+			continue
+		}
+		scope := pkg.Types.Scope()
+		for _, name := range scope.Names() {
+			obj := scope.Lookup(name)
+			if !obj.Exported() {
+				continue
+			}
+			kind := loader.SymKind(obj)
+			if kind == "" {
+				continue
+			}
+			syms = append(syms, graph.Symbol{
+				ID:       id,
+				Kind:     kind,
+				Name:     name,
+				Package:  pkg.PkgPath,
+				Exported: true,
+			})
+			id++
+		}
+	}
+	return syms, nil
 }
 
 // suffixMatch returns the first path in paths that ends with "/"+suffix or equals suffix.

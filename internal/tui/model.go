@@ -18,6 +18,9 @@ import (
 // pkgListMsg carries the T1 package list loaded in the background.
 type pkgListMsg []string
 
+// allSymbolsMsg carries the global symbol index loaded in the background.
+type allSymbolsMsg []symbolEntry
+
 // treeRef is a (file, line) pointer for a rendered tree child row.
 // Zero value means the row is a group header with no direct reference.
 type treeRef struct {
@@ -82,6 +85,7 @@ type Model struct {
 	width, height int
 
 	allPkgs       []string
+	allSymbols    []symbolEntry // accumulated across all loaded targets
 	searchResults []searchResult
 	searchSel     int
 
@@ -122,7 +126,7 @@ func Run(initialTarget string, cfg inspect.Config) error {
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{textinput.Blink, loadPkgList(m.cfg)}
+	cmds := []tea.Cmd{textinput.Blink, loadPkgList(m.cfg), loadAllSymbols(m.cfg)}
 	if strings.TrimSpace(m.input.Value()) != "" {
 		cmds = append(cmds, doLoad(m.input.Value(), m.cfg), m.spinner.Tick)
 	}
@@ -133,6 +137,17 @@ func loadPkgList(cfg inspect.Config) tea.Cmd {
 	return func() tea.Msg {
 		paths, _ := inspect.ListPackages(cfg)
 		return pkgListMsg(paths)
+	}
+}
+
+func loadAllSymbols(cfg inspect.Config) tea.Cmd {
+	return func() tea.Msg {
+		syms, _ := inspect.LoadAllSymbols(cfg)
+		entries := make([]symbolEntry, len(syms))
+		for i, s := range syms {
+			entries[i] = symbolEntry{sym: s}
+		}
+		return allSymbolsMsg(entries)
 	}
 }
 
@@ -155,7 +170,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pkgListMsg:
 		m.allPkgs = []string(msg)
 		if m.inputMode {
-			m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.symbols)
+			m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols)
+		}
+		return m, nil
+
+	case allSymbolsMsg:
+		m.allSymbols = []symbolEntry(msg)
+		if m.inputMode {
+			m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols)
 		}
 		return m, nil
 
@@ -235,7 +257,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			default:
 				var cmd tea.Cmd
 				m.input, cmd = m.input.Update(msg)
-				m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.symbols)
+				m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols)
 				m.searchSel = 0
 				return m, cmd
 			}
@@ -249,7 +271,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "/":
 			m.inputMode = true
 			m.input.Focus()
-			m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.symbols)
+			m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols)
 			m.searchSel = 0
 			return m, nil
 
@@ -358,6 +380,7 @@ func buildSymbolList(m Model) Model {
 	}
 	return m
 }
+
 
 func updateTree(m Model) Model {
 	if m.result == nil || len(m.symbols) == 0 {

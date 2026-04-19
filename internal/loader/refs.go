@@ -48,7 +48,7 @@ func WalkRefs(targetPkg string, importerPaths []string, cfg Config, startID int)
 		if !obj.Exported() {
 			continue
 		}
-		kind := symKind(obj)
+		kind := SymKind(obj)
 		if kind == "" {
 			continue
 		}
@@ -168,8 +168,8 @@ func enclosingFuncName(fset *token.FileSet, files []*ast.File, pos token.Pos) st
 	return ""
 }
 
-// symKind maps a types.Object to the Symbol.Kind string.
-func symKind(obj types.Object) string {
+// SymKind maps a types.Object to the Symbol.Kind string.
+func SymKind(obj types.Object) string {
 	switch obj.(type) {
 	case *types.Func:
 		return "func"

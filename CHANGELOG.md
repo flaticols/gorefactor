@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.13] - 2026-04-19
+
+### Added
+- Global symbol index: on TUI startup, all exported symbols across the entire workspace are loaded in the background (NeedTypes, no SSA); searching by name (e.g. `Edge`, `Handler`, `(*Recv).Method`) works immediately without loading a package first
+- Results show `SymName (kind)  full/pkg/path` so you can see which package each symbol belongs to
+
 ## [0.0.12] - 2026-04-19
 
 ### Added
