@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	"go.flaticols.dev/gorefactor/internal/graph"
 )
@@ -56,11 +55,11 @@ func treeByPkg(edges []graph.Edge, violOnly bool, violPkgs map[string]bool) []st
 		if violOnly && !isViol {
 			continue
 		}
-		marker := "✓ "
+		marker := "✓"
 		if isViol {
-			marker = styleViolation.Render("✗") + " "
+			marker = styleViolation.Render("✗")
 		}
-		lines = append(lines, fmt.Sprintf("  %s%s (%d refs)", marker, pkg, len(es)))
+		lines = append(lines, fmt.Sprintf("  %s %s (%d refs)", marker, pkg, len(es)))
 		for _, e := range es {
 			sameMark := ""
 			if e.SamePkg {
@@ -68,6 +67,9 @@ func treeByPkg(edges []graph.Edge, violOnly bool, violPkgs map[string]bool) []st
 			}
 			lines = append(lines, fmt.Sprintf("      %s:%d%s", e.File, e.Line, sameMark))
 		}
+	}
+	if len(lines) == 0 {
+		return []string{"  (no violations)"}
 	}
 	return lines
 }
@@ -103,8 +105,11 @@ func treeByFile(edges []graph.Edge, violOnly bool, violPkgs map[string]bool) []s
 		}
 		lines = append(lines, fmt.Sprintf("  %s %s", marker, k.file))
 		for _, e := range es {
-			lines = append(lines, fmt.Sprintf("      :%d  %s", e.Line, strings.TrimSpace(string(e.Kind))))
+			lines = append(lines, fmt.Sprintf("      :%d  %s", e.Line, string(e.Kind)))
 		}
+	}
+	if len(lines) == 0 {
+		return []string{"  (no violations)"}
 	}
 	return lines
 }
