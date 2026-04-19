@@ -66,13 +66,13 @@ type Graph struct {
 	Edges   []Edge
 	Symbols []Symbol
 
-	byID        map[int]int
-	byName      map[string][]int
-	byPkgRecv   map[string][]int
+	byID         map[int]int
+	byName       map[string][]int
+	byPkgRecv    map[string][]int
 	callersIndex map[int][]int
 	calleesIndex map[int][]int
-	bySymbolID  map[int]int
-	bySymbolPkg map[string][]int
+	bySymbolID   map[int]int
+	bySymbolPkg  map[string][]int
 }
 
 // Index builds all in-memory indexes. It is safe to call multiple times.
