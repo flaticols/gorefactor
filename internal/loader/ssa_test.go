@@ -1,12 +1,14 @@
-package graph
+package loader_test
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
+
+	"go.flaticols.dev/gorefactor/internal/graph"
+	"go.flaticols.dev/gorefactor/internal/loader"
 )
 
-func TestBuildLoadsPackagesAndEdges(t *testing.T) {
+func TestSSALoadsPackagesAndEdges(t *testing.T) {
 	dir := t.TempDir()
 
 	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.26.2\n")
@@ -25,13 +27,14 @@ func init() {
 }
 `)
 
-	g, err := Build(BuildConfig{
+	res, err := loader.Load(loader.Config{
 		Dir:      dir,
 		Patterns: []string{"./..."},
-	})
+	}, loader.DepthFull)
 	if err != nil {
-		t.Fatalf("Build() error = %v", err)
+		t.Fatalf("Load() error = %v", err)
 	}
+	g := res.Graph
 
 	execFn, ok := findFunc(g, "Execute", "Runner")
 	if !ok {
@@ -60,21 +63,11 @@ func init() {
 	}
 }
 
-func findFunc(g *Graph, name, receiver string) (Func, bool) {
+func findFunc(g *graph.Graph, name, receiver string) (graph.Func, bool) {
 	for _, fn := range g.Funcs {
 		if fn.Name == name && fn.Receiver == receiver {
 			return fn, true
 		}
 	}
-	return Func{}, false
-}
-
-func writeFile(t *testing.T, path, contents string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("MkdirAll(%s) error = %v", path, err)
-	}
-	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
-		t.Fatalf("WriteFile(%s) error = %v", path, err)
-	}
+	return graph.Func{}, false
 }

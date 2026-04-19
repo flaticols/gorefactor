@@ -142,6 +142,9 @@ func buildSSA(cfg Config) (*graph.Graph, error) {
 		if a.Name != b.Name {
 			return a.Name < b.Name
 		}
+		if a.Receiver != b.Receiver {
+			return a.Receiver < b.Receiver
+		}
 		return a.ID < b.ID
 	})
 
