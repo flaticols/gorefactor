@@ -26,8 +26,9 @@ func WalkRefs(targetPkg string, importerPaths []string, cfg Config, startID int)
 
 	// Load the target package to enumerate its exported symbols.
 	targetPkgs, err := packages.Load(&packages.Config{
-		Mode: packages.NeedName | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
-		Dir:  cfg.Dir,
+		Mode:  packages.NeedName | packages.NeedSyntax | packages.NeedTypes,
+		Dir:   cfg.Dir,
+		Tests: cfg.Tests,
 	}, targetPkg)
 	if err != nil {
 		return nil, err
@@ -78,7 +79,8 @@ func WalkRefs(targetPkg string, importerPaths []string, cfg Config, startID int)
 	importerPkgs, err := packages.Load(&packages.Config{
 		Mode: packages.NeedName | packages.NeedSyntax | packages.NeedTypes |
 			packages.NeedTypesInfo | packages.NeedImports,
-		Dir: cfg.Dir,
+		Dir:   cfg.Dir,
+		Tests: cfg.Tests,
 	}, importerPaths...)
 	if err != nil {
 		return nil, err
