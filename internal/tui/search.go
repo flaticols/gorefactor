@@ -41,6 +41,17 @@ func scoreMatch(query, text string) int {
 	return 0
 }
 
+// isNoisePkg reports whether p is a stdlib or well-known toolchain package
+// that clutters search results.
+func isNoisePkg(p string) bool {
+	if !strings.Contains(p, ".") {
+		return true // stdlib: "fmt", "net/http", etc.
+	}
+	return strings.HasPrefix(p, "golang.org/") ||
+		strings.HasPrefix(p, "google.golang.org/") ||
+		strings.HasPrefix(p, "gopkg.in/")
+}
+
 // filterResults scores and ranks packages and symbols against query, returning up to maxResults.
 func filterResults(query string, pkgs []string, syms []symbolEntry) []searchResult {
 	const maxResults = 15
@@ -54,6 +65,9 @@ func filterResults(query string, pkgs []string, syms []symbolEntry) []searchResu
 
 	if q == "" {
 		for i, p := range pkgs {
+			if isNoisePkg(p) {
+				continue
+			}
 			if i >= maxResults {
 				break
 			}
@@ -61,6 +75,9 @@ func filterResults(query string, pkgs []string, syms []symbolEntry) []searchResu
 		}
 	} else {
 		for _, p := range pkgs {
+			if isNoisePkg(p) {
+				continue
+			}
 			seg := p
 			if i := strings.LastIndex(p, "/"); i >= 0 {
 				seg = p[i+1:]
