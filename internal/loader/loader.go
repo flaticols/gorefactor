@@ -65,3 +65,24 @@ type Result struct {
 	// Graph is the T3 SSA call graph. Populated when Depth == DepthFull.
 	Graph *graph.Graph
 }
+
+// Load runs T1 always. When depth == DepthFull, also runs T3 (SSA/CHA).
+func Load(cfg Config, depth Depth) (*Result, error) {
+	cfg.progress("loading package graph")
+	pg, err := BuildPackageGraph(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &Result{Packages: pg}
+
+	if depth == DepthFull {
+		g, err := buildSSA(cfg)
+		if err != nil {
+			return nil, err
+		}
+		result.Graph = g
+	}
+
+	return result, nil
+}
