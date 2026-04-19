@@ -116,6 +116,15 @@ func ResolveTarget(target string, cfg Config) (*InspectResult, error) {
 	}, nil
 }
 
+// ListPackages returns all package paths in the workspace using a T1-only load (fast).
+func ListPackages(cfg Config) ([]string, error) {
+	pg, err := loader.BuildPackageGraph(cfg.Loader)
+	if err != nil {
+		return nil, err
+	}
+	return pg.AllPaths(), nil
+}
+
 // suffixMatch returns the first path in paths that ends with "/"+suffix or equals suffix.
 func suffixMatch(suffix string, paths []string) string {
 	for _, p := range paths {

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.10] - 2026-04-19
+
+### Added
+- Fuzzy search with live results in TUI: type in search mode to see matching packages and symbols; `j`/`k` navigate the dropdown; `Enter` picks a result
+- Search matches by package last-segment, full path, subsequence, and symbol name; symbols shown as `Name (kind)  pkg/path`
+- Package list loaded in background on TUI startup (T1 only, fast)
+
+### Fixed
+- Version shows as `(devel)` when installed from Nix flake: `buildGoModule` now injects version via `-ldflags "-X main.Version=..."`, GoReleaser does the same
+
 ## [0.0.9] - 2026-04-19
 
 ### Added

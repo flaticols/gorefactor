@@ -20,6 +20,10 @@ import (
 
 const defaultRulesFile = "gorefact.rules.toml"
 
+// Version is injected at build time via -ldflags "-X main.Version=x.y.z".
+// Falls back to debug.ReadBuildInfo (works for `go install` from a tagged release).
+var Version string
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -388,6 +392,9 @@ func resolvePath(baseDir, path string) string {
 }
 
 func version() string {
+	if v := strings.TrimSpace(Version); v != "" {
+		return v
+	}
 	info, ok := debug.ReadBuildInfo()
 	if !ok || info == nil {
 		return "(unknown)"
@@ -401,9 +408,6 @@ func version() string {
 			return rev + "-dirty"
 		}
 		return rev
-	}
-	if strings.TrimSpace(info.Main.Version) != "" {
-		return info.Main.Version
 	}
 	return "(devel)"
 }

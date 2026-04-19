@@ -2,7 +2,7 @@
 # Do not edit manually — changes will be overwritten.
 { lib, stdenvNoCC, fetchurl }:
 let
-  version = "0.0.9";
+  version = "0.0.10";
   tarballs = {
     "aarch64-darwin" = fetchurl {
       url = "https://github.com/flaticols/gorefactor/releases/download/v${version}/gorefact_Darwin_arm64.tar.gz";

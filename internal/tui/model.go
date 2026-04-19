@@ -13,6 +13,9 @@ import (
 	"go.flaticols.dev/gorefactor/internal/inspect"
 )
 
+// pkgListMsg carries the T1 package list loaded in the background.
+type pkgListMsg []string
+
 // GroupMode controls how reference edges are grouped in the tree pane.
 type GroupMode int
 
@@ -66,6 +69,10 @@ type Model struct {
 	active        pane
 	width, height int
 
+	allPkgs       []string
+	searchResults []searchResult
+	searchSel     int
+
 	loading bool
 	err     error
 }
@@ -103,11 +110,18 @@ func Run(initialTarget string, cfg inspect.Config) error {
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{textinput.Blink}
+	cmds := []tea.Cmd{textinput.Blink, loadPkgList(m.cfg)}
 	if strings.TrimSpace(m.input.Value()) != "" {
 		cmds = append(cmds, doLoad(m.input.Value(), m.cfg), m.spinner.Tick)
 	}
 	return tea.Batch(cmds...)
+}
+
+func loadPkgList(cfg inspect.Config) tea.Cmd {
+	return func() tea.Msg {
+		paths, _ := inspect.ListPackages(cfg)
+		return pkgListMsg(paths)
+	}
 }
 
 func doLoad(target string, cfg inspect.Config) tea.Cmd {
@@ -126,10 +140,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.Width = m.width - 12
 		return m, nil
 
+	case pkgListMsg:
+		m.allPkgs = []string(msg)
+		if m.inputMode {
+			m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.symbols)
+		}
+		return m, nil
+
 	case loadDoneMsg:
 		m.loading = false
 		m.inputMode = false
 		m.input.Blur()
+		m.searchResults = nil
 		if msg.err != nil {
 			m.err = msg.err
 			return m, nil
@@ -156,28 +178,53 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-		// Search/insert mode: all keystrokes go to textinput.
+		// Search/insert mode.
 		if m.inputMode {
 			switch msg.String() {
 			case "esc":
 				m.inputMode = false
 				m.input.Blur()
+				m.searchResults = nil
 				return m, nil
 			case "enter":
-				q := strings.TrimSpace(m.input.Value())
+				var q string
+				if len(m.searchResults) > 0 {
+					sel := m.searchResults[m.searchSel]
+					if sel.sym != "" {
+						q = sel.pkg + "." + sel.sym
+					} else {
+						q = sel.pkg
+					}
+					m.input.SetValue(q)
+				} else {
+					q = strings.TrimSpace(m.input.Value())
+				}
 				if q != "" {
 					m.loading = true
 					m.err = nil
 					m.inputMode = false
 					m.input.Blur()
+					m.searchResults = nil
 					return m, tea.Batch(doLoad(q, m.cfg), m.spinner.Tick)
 				}
 				m.inputMode = false
 				m.input.Blur()
 				return m, nil
+			case "j", "down":
+				if m.searchSel < len(m.searchResults)-1 {
+					m.searchSel++
+				}
+				return m, nil
+			case "k", "up":
+				if m.searchSel > 0 {
+					m.searchSel--
+				}
+				return m, nil
 			default:
 				var cmd tea.Cmd
 				m.input, cmd = m.input.Update(msg)
+				m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.symbols)
+				m.searchSel = 0
 				return m, cmd
 			}
 		}
@@ -190,6 +237,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "/":
 			m.inputMode = true
 			m.input.Focus()
+			m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.symbols)
+			m.searchSel = 0
 			return m, nil
 
 		case "i":
@@ -310,12 +359,16 @@ func (m Model) View() string {
 
 	help := m.renderHelpBar()
 
-	// Reserve rows: 1 search + 1 help + detailPanel (when shown).
+	// Reserve rows: 1 search + 1 help + dropdown (when in search mode) + detailPanel (when shown).
+	dropdownH := 0
+	if m.inputMode && len(m.searchResults) > 0 {
+		dropdownH = min(len(m.searchResults), 10)
+	}
 	detailH := 0
 	if m.showDetail {
 		detailH = detailPanelHeight
 	}
-	contentH := m.height - 2 - detailH
+	contentH := m.height - 2 - dropdownH - detailH
 	if contentH < 2 {
 		contentH = 2
 	}
@@ -330,12 +383,52 @@ func (m Model) View() string {
 	right := m.renderTree(rightW, contentH)
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
-	parts := []string{searchBar, body, help}
-	if m.showDetail {
-		parts = append(parts[:2], append([]string{m.renderDetailPanel()}, parts[2:]...)...)
+	parts := []string{searchBar}
+	if dropdownH > 0 {
+		parts = append(parts, m.renderSearchDropdown(dropdownH))
 	}
-
+	parts = append(parts, body)
+	if m.showDetail {
+		parts = append(parts, m.renderDetailPanel())
+	}
+	parts = append(parts, help)
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+func (m Model) renderSearchDropdown(h int) string {
+	visible := m.searchResults
+	if len(visible) > h {
+		visible = visible[:h]
+	}
+	w := m.width
+	lines := make([]string, 0, len(visible))
+	for i, r := range visible {
+		selected := i == m.searchSel
+		if r.sym != "" {
+			// Symbol result: "SymName (kind)  pkg/path"
+			if selected {
+				plain := r.sym + " (" + r.kind + ")  " + r.pkg
+				lines = append(lines, styleSelected.Width(w).Render("▶ "+truncate(plain, w-4)))
+			} else {
+				label := styleActive.Render(r.sym) + styleDim.Render(" ("+r.kind+")  "+r.pkg)
+				lines = append(lines, "  "+label)
+			}
+		} else {
+			// Package result: "prefix/lastSeg" — last segment highlighted, prefix dimmed
+			if selected {
+				lines = append(lines, styleSelected.Width(w).Render("▶ "+truncate(r.pkg, w-4)))
+			} else {
+				var label string
+				if idx := strings.LastIndex(r.pkg, "/"); idx >= 0 {
+					label = styleDim.Render(r.pkg[:idx+1]) + r.pkg[idx+1:]
+				} else {
+					label = r.pkg
+				}
+				lines = append(lines, "  "+label)
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) renderSearch() string {

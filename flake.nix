@@ -13,11 +13,12 @@
         default = pkgs.callPackage ./nix/gorefact.nix {};
 
         # Build from source — useful for development or patching.
-        source = pkgs.buildGoModule {
+        source = pkgs.buildGoModule rec {
           pname = "gorefact";
-          version = "0.0.8";
+          version = "0.0.10";
           src = ./.;
           go = pkgs.go;
+          ldflags = [ "-s" "-w" "-X main.Version=${version}" ];
           vendorHash = "sha256-cMZ0bNUDtTAnp2PdpdS+Ia53qm+SHe3AqMf/pH9gykU=";
           doCheck = false; # tests call packages.Load which requires network
           meta = with pkgs.lib; {
