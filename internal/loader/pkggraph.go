@@ -16,7 +16,8 @@ type PackageNode struct {
 
 // PackageGraph is the result of a T1 load.
 type PackageGraph struct {
-	Nodes map[string]*PackageNode // keyed by import path
+	Nodes  map[string]*PackageNode // keyed by import path
+	Module string                  // main module path, if any
 }
 
 // ImportersOf returns all packages that directly import targetPath, sorted by path.
@@ -90,6 +91,9 @@ func BuildPackageGraph(cfg Config) (*PackageGraph, error) {
 	}
 
 	for _, pkg := range pkgs {
+		if pg.Module == "" && pkg.Module != nil && pkg.Module.Main {
+			pg.Module = pkg.Module.Path
+		}
 		walk(pkg)
 	}
 

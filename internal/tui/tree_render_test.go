@@ -14,7 +14,7 @@ func TestBuildTreeLines_GroupPkg(t *testing.T) {
 	}
 	violPkgs := map[string]bool{"example.com/handler": true}
 
-	lines, _ := buildTreeLines(edges, 100, GroupPkg, false, violPkgs)
+	lines, _ := buildTreeLines(edges, 100, GroupPkg, false, violPkgs, nil)
 
 	if len(lines) == 0 {
 		t.Fatal("expected lines, got none")
@@ -44,7 +44,7 @@ func TestBuildTreeLines_ViolOnly(t *testing.T) {
 	}
 	violPkgs := map[string]bool{"example.com/handler": true}
 
-	lines, _ := buildTreeLines(edges, 100, GroupPkg, true, violPkgs)
+	lines, _ := buildTreeLines(edges, 100, GroupPkg, true, violPkgs, nil)
 	for _, l := range lines {
 		if strings.Contains(l, "service") {
 			t.Errorf("violOnly=true should hide clean package, but got: %q", l)
@@ -53,7 +53,7 @@ func TestBuildTreeLines_ViolOnly(t *testing.T) {
 }
 
 func TestBuildTreeLines_NoEdges(t *testing.T) {
-	lines, _ := buildTreeLines(nil, 100, GroupPkg, false, nil)
+	lines, _ := buildTreeLines(nil, 100, GroupPkg, false, nil, nil)
 	if len(lines) == 0 {
 		t.Fatal("expected at least one line (empty message), got none")
 	}
@@ -66,7 +66,7 @@ func TestBuildTreeLines_GroupFile(t *testing.T) {
 	}
 	violPkgs := map[string]bool{}
 
-	lines, _ := buildTreeLines(edges, 100, GroupFile, false, violPkgs)
+	lines, _ := buildTreeLines(edges, 100, GroupFile, false, violPkgs, nil)
 	// Both edges are in the same file — should appear under one group header.
 	fileHeaders := 0
 	for _, l := range lines {

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.14] - 2026-04-19
+
+### Added
+- Struct member view: `Enter` on a `type` symbol opens a new panel listing its exported methods and fields (`|-Method(args) (result) (func)` / `|-Field:Type (field)`); `Esc` returns to the symbol list; `e` opens the focused member in `$EDITOR`
+- `inspect.LoadStructMembers(cfg, pkgPath, typeName)` enumerates exported methods (via `types.NewMethodSet` on pointer receiver) and struct fields
+
+### Changed
+- Displayed package paths are stripped of the main module prefix in all panels (symbol list, search dropdown, reference tree, detail panel) — e.g. `go.flaticols.dev/gorefactor/internal/graph` is shown as `internal/graph`
+- `inspect.ListPackages` now returns `(paths, module, error)`; `loader.PackageGraph` exposes the main module path
+- `treeByFunc` renders `pkg.Func` from short pkg + caller func (previously concatenated full pkg path)
+
 ## [0.0.13] - 2026-04-19
 
 ### Added

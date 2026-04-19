@@ -16,7 +16,17 @@ import (
 )
 
 // pkgListMsg carries the T1 package list loaded in the background.
-type pkgListMsg []string
+type pkgListMsg struct {
+	paths  []string
+	module string
+}
+
+// structMembersMsg carries the struct members loaded for an inspected struct.
+type structMembersMsg struct {
+	pkgPath  string
+	typeName string
+	members  []inspect.StructMember
+}
 
 // allSymbolsMsg carries the global symbol index loaded in the background.
 type allSymbolsMsg []symbolEntry
@@ -44,6 +54,13 @@ type pane int
 const (
 	paneList pane = iota
 	paneTree
+)
+
+type viewMode int
+
+const (
+	viewSymbols viewMode = iota
+	viewStruct
 )
 
 const detailPanelHeight = 9
@@ -88,6 +105,14 @@ type Model struct {
 	allSymbols    []symbolEntry // accumulated across all loaded targets
 	searchResults []searchResult
 	searchSel     int
+
+	modulePrefix string // main module path — stripped from displayed package paths
+
+	view          viewMode
+	structMembers []inspect.StructMember
+	structPkg     string
+	structName    string
+	structIdx     int
 
 	loading bool
 	err     error
@@ -135,8 +160,15 @@ func (m Model) Init() tea.Cmd {
 
 func loadPkgList(cfg inspect.Config) tea.Cmd {
 	return func() tea.Msg {
-		paths, _ := inspect.ListPackages(cfg)
-		return pkgListMsg(paths)
+		paths, module, _ := inspect.ListPackages(cfg)
+		return pkgListMsg{paths: paths, module: module}
+	}
+}
+
+func loadStructMembers(cfg inspect.Config, pkgPath, typeName string) tea.Cmd {
+	return func() tea.Msg {
+		ms, _ := inspect.LoadStructMembers(cfg, pkgPath, typeName)
+		return structMembersMsg{pkgPath: pkgPath, typeName: typeName, members: ms}
 	}
 }
 
@@ -168,9 +200,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case pkgListMsg:
-		m.allPkgs = []string(msg)
+		m.allPkgs = msg.paths
+		if m.modulePrefix == "" {
+			m.modulePrefix = msg.module
+		}
 		if m.inputMode {
 			m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols)
+		}
+		return m, nil
+
+	case structMembersMsg:
+		if m.view == viewStruct && m.structPkg == msg.pkgPath && m.structName == msg.typeName {
+			m.structMembers = msg.members
+			m.structIdx = 0
 		}
 		return m, nil
 
@@ -268,6 +310,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q":
 			return m, tea.Quit
 
+		case "esc":
+			if m.view == viewStruct {
+				m.view = viewSymbols
+				m.structMembers = nil
+				m.structPkg = ""
+				m.structName = ""
+				m.structIdx = 0
+				return m, nil
+			}
+			return m, nil
+
+		case "enter":
+			if m.view == viewSymbols && m.active == paneList && m.listIdx < len(m.symbols) {
+				sel := m.symbols[m.listIdx].sym
+				if sel.Kind == "type" {
+					m.view = viewStruct
+					m.structPkg = sel.Package
+					m.structName = sel.Name
+					m.structMembers = nil
+					m.structIdx = 0
+					return m, loadStructMembers(m.cfg, sel.Package, sel.Name)
+				}
+			}
+			return m, nil
+
 		case "/":
 			m.inputMode = true
 			m.input.Focus()
@@ -336,7 +403,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "j", "down":
 			switch m.active {
 			case paneList:
-				if m.listIdx < len(m.symbols)-1 {
+				if m.view == viewStruct {
+					if m.structIdx < len(m.structMembers)-1 {
+						m.structIdx++
+					}
+				} else if m.listIdx < len(m.symbols)-1 {
 					m.listIdx++
 					m = updateTree(m)
 				}
@@ -350,7 +421,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "k", "up":
 			switch m.active {
 			case paneList:
-				if m.listIdx > 0 {
+				if m.view == viewStruct {
+					if m.structIdx > 0 {
+						m.structIdx--
+					}
+				} else if m.listIdx > 0 {
 					m.listIdx--
 					m = updateTree(m)
 				}
@@ -392,7 +467,7 @@ func updateTree(m Model) Model {
 	for _, v := range m.result.Violations {
 		violPkgs[v.FromPkg] = true
 	}
-	m.treeLines, m.treeRefs = buildTreeLines(m.result.Edges, sel.sym.ID, m.group, m.violOnly, violPkgs)
+	m.treeLines, m.treeRefs = buildTreeLines(m.result.Edges, sel.sym.ID, m.group, m.violOnly, violPkgs, m.shortPkg)
 	m.treeIdx = 0
 	return m
 }
@@ -452,25 +527,26 @@ func (m Model) renderSearchDropdown(h int) string {
 	lines := make([]string, 0, len(visible))
 	for i, r := range visible {
 		selected := i == m.searchSel
+		shortP := m.shortPkg(r.pkg)
 		if r.sym != "" {
 			// Symbol result: "SymName (kind)  pkg/path"
 			if selected {
-				plain := r.sym + " (" + r.kind + ")  " + r.pkg
+				plain := r.sym + " (" + r.kind + ")  " + shortP
 				lines = append(lines, styleSelected.Width(w).Render("▶ "+truncate(plain, w-4)))
 			} else {
-				label := styleActive.Render(r.sym) + styleDim.Render(" ("+r.kind+")  "+r.pkg)
+				label := styleActive.Render(r.sym) + styleDim.Render(" ("+r.kind+")  "+shortP)
 				lines = append(lines, "  "+label)
 			}
 		} else {
 			// Package result: "prefix/lastSeg" — last segment highlighted, prefix dimmed
 			if selected {
-				lines = append(lines, styleSelected.Width(w).Render("▶ "+truncate(r.pkg, w-4)))
+				lines = append(lines, styleSelected.Width(w).Render("▶ "+truncate(shortP, w-4)))
 			} else {
 				var label string
-				if idx := strings.LastIndex(r.pkg, "/"); idx >= 0 {
-					label = styleDim.Render(r.pkg[:idx+1]) + r.pkg[idx+1:]
+				if idx := strings.LastIndex(shortP, "/"); idx >= 0 {
+					label = styleDim.Render(shortP[:idx+1]) + shortP[idx+1:]
 				} else {
-					label = r.pkg
+					label = shortP
 				}
 				lines = append(lines, "  "+label)
 			}
@@ -492,6 +568,9 @@ func (m Model) renderSearch() string {
 }
 
 func (m Model) renderList(w, h int) string {
+	if m.view == viewStruct {
+		return m.renderStructList(w, h)
+	}
 	title := "Symbols"
 	if m.active == paneList {
 		title = styleActiveTitle.Render(title)
@@ -522,6 +601,61 @@ func (m Model) renderList(w, h int) string {
 		}
 	}
 
+	for len(lines) < h {
+		lines = append(lines, strings.Repeat(" ", w))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderStructList(w, h int) string {
+	title := m.structName
+	if m.active == paneList {
+		title = styleActiveTitle.Render(title)
+	} else {
+		title = styleTitle.Render(title)
+	}
+
+	lines := make([]string, 0, h)
+	lines = append(lines, padRight(title, w))
+
+	if m.structMembers == nil {
+		lines = append(lines, styleHelp.Render("  loading..."))
+		for len(lines) < h {
+			lines = append(lines, strings.Repeat(" ", w))
+		}
+		return strings.Join(lines, "\n")
+	}
+	if len(m.structMembers) == 0 {
+		lines = append(lines, styleHelp.Render("  (no exported members)"))
+		for len(lines) < h {
+			lines = append(lines, strings.Repeat(" ", w))
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	for i, mem := range m.structMembers {
+		if len(lines) >= h {
+			break
+		}
+		var label string
+		switch mem.Kind {
+		case "method":
+			label = fmt.Sprintf(" |-%s%s (func)", mem.Name, mem.Signature)
+		case "field":
+			label = fmt.Sprintf(" |-%s:%s (field)", mem.Name, mem.Type)
+		default:
+			label = " |-" + mem.Name
+		}
+		label = truncate(label, w-1)
+		switch {
+		case i == m.structIdx && m.active == paneList:
+			lines = append(lines, styleSelected.Width(w).Render(label))
+		case i == m.structIdx:
+			lines = append(lines, styleCurrent.Render(padRight(label, w)))
+		default:
+			lines = append(lines, styleItem.Render(padRight(label, w)))
+		}
+	}
 	for len(lines) < h {
 		lines = append(lines, strings.Repeat(" ", w))
 	}
@@ -577,7 +711,7 @@ func (m Model) renderDetailPanel() string {
 
 	cols := []string{
 		fmt.Sprintf("  %s  %s  %s:%d  refs:%d",
-			styleActive.Render(s.Package+"."+s.Name),
+			styleActive.Render(m.shortPkg(s.Package)+"."+s.Name),
 			styleDim.Render("("+s.Kind+")"),
 			s.File, s.Line,
 			sel.refCount,
@@ -591,7 +725,7 @@ func (m Model) renderDetailPanel() string {
 				violLine += styleDim.Render(fmt.Sprintf("(+%d more)", len(m.result.Violations)-3))
 				break
 			}
-			violLine += styleViolation.Render(v.FromPkg) + styleDim.Render(" "+v.Rule.Reason+"  ")
+			violLine += styleViolation.Render(m.shortPkg(v.FromPkg)) + styleDim.Render(" "+v.Rule.Reason+"  ")
 		}
 		cols = append(cols, violLine)
 	}
@@ -621,6 +755,8 @@ func (m Model) renderHelpBar() string {
 	parts := []string{
 		"[/] search",
 		"[hjkl] navigate",
+		"[enter] struct",
+		"[esc] back",
 		"[g] group=" + groupStr,
 		"[f] violations=" + violStr,
 		"[i] detail=" + detailStr,
@@ -639,12 +775,35 @@ func (m Model) currentRef() (file string, line int) {
 			return r.file, r.line
 		}
 	case paneList:
+		if m.view == viewStruct {
+			if m.structIdx < len(m.structMembers) {
+				mem := m.structMembers[m.structIdx]
+				return mem.File, mem.Line
+			}
+			return "", 0
+		}
 		if m.listIdx < len(m.symbols) {
 			s := m.symbols[m.listIdx].sym
 			return s.File, s.Line
 		}
 	}
 	return "", 0
+}
+
+// shortPkg strips the main module prefix from a package path so only the
+// intra-module portion is shown (e.g. "go.flaticols.dev/gorefactor/internal/graph"
+// → "internal/graph"). Packages outside the module are returned unchanged.
+func (m Model) shortPkg(p string) string {
+	if m.modulePrefix == "" || p == "" {
+		return p
+	}
+	if p == m.modulePrefix {
+		return "."
+	}
+	if strings.HasPrefix(p, m.modulePrefix+"/") {
+		return p[len(m.modulePrefix)+1:]
+	}
+	return p
 }
 
 // overlayBottom renders panel on top of the last lines of base.
