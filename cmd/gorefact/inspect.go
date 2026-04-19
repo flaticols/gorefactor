@@ -63,7 +63,14 @@ func runInspect(args []string, stdout, stderr io.Writer) int {
 		Rules: ruleSet,
 	}
 
-	if isTTY() {
+	formatExplicit := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "format" {
+			formatExplicit = true
+		}
+	})
+
+	if isTTY() && !formatExplicit {
 		if err := tui.Run(target, cfg); err != nil {
 			fmt.Fprintf(stderr, "tui error: %v\n", err)
 			return 1
@@ -124,6 +131,7 @@ func printInspectHelp(w io.Writer) {
 	fmt.Fprintln(w, "Examples:")
 	fmt.Fprintln(w, "  gorefact inspect github.com/acme/tasks")
 	fmt.Fprintln(w, "  gorefact inspect github.com/acme/tasks.Engine --format json")
+	fmt.Fprintln(w, "  gorefact inspect github.com/acme/tasks --format json | jq .")
 	fmt.Fprintln(w, "  gorefact inspect github.com/acme/tasks | less")
 	fmt.Fprintln(w)
 }
