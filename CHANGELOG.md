@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.9] - 2026-04-19
+
+### Added
+- `GroupFunc` grouping mode in TUI: `g` now cycles `pkg → file → func`, grouping references by caller function with full qualified name (`pkg/path.(*Recv).Method`)
+- `CallerFunc` field on `graph.Edge`, populated by T2 AST walk detecting the enclosing function declaration at each reference site
+- Symbol list shows full qualified name: `github.com/acme/tasks.Run (func) [12]`
+- Detail panel toggled by `i`: compact bottom overlay showing symbol info and violations summary; main layout is now two panes (Symbols + References) using full width
+
 ## [0.0.8] - 2026-04-19
 
 ### Added
