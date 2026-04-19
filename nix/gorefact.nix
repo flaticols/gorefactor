@@ -6,11 +6,11 @@ let
   tarballs = {
     "aarch64-darwin" = fetchurl {
       url = "https://github.com/flaticols/gorefactor/releases/download/v${version}/gorefact_Darwin_arm64.tar.gz";
-      hash = "sha256-NLJ2QHFo3wkItDBXyw21Ru//IWzNyvHG9F2+WuaNXDY="; # arm
+      hash = "sha256-YqmFNopcobrvRhLaKBJSs/pogDac4FPVbI2w4BepYgc="; # arm
     };
     "x86_64-darwin" = fetchurl {
       url = "https://github.com/flaticols/gorefactor/releases/download/v${version}/gorefact_Darwin_x86_64.tar.gz";
-      hash = "sha256-B9x63RDq+HLNa6NL2ee/FUgsWx02CJWl1VXkhSj/Xh0="; # x86
+      hash = "sha256-o86UujWuH+WUHNQFGFx9NBfjXvgyJjHKpCkM3XPIG8E="; # x86
     };
   };
 in
