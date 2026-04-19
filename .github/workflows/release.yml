@@ -58,3 +58,42 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GORELEASER_GITHUB_TOKEN }}
+
+  update-nix:
+    needs: goreleaser
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GORELEASER_GITHUB_TOKEN }}
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+
+      - name: Compute archive hashes and update nix/gorefact.nix
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          BASE="https://github.com/flaticols/gorefactor/releases/download/${TAG}"
+
+          ARM_URL="${BASE}/gorefact_Darwin_arm64.tar.gz"
+          X86_URL="${BASE}/gorefact_Darwin_x86_64.tar.gz"
+
+          ARM_HASH=$(nix-prefetch-url "$ARM_URL" 2>/dev/null | tail -1 | xargs -I{} nix hash convert --hash-algo sha256 --from nix32 {})
+          X86_HASH=$(nix-prefetch-url "$X86_URL" 2>/dev/null | tail -1 | xargs -I{} nix hash convert --hash-algo sha256 --from nix32 {})
+
+          sed -i \
+            -e "s|version = \"[^\"]*\"|version = \"${VERSION}\"|" \
+            -e "s|hash = \"sha256-[^\"]*\"; # arm|hash = \"${ARM_HASH}\"; # arm|" \
+            -e "s|hash = \"sha256-[^\"]*\"; # x86|hash = \"${X86_HASH}\"; # x86|" \
+            nix/gorefact.nix
+
+      - name: Commit updated nix/gorefact.nix
+        run: |
+          git config user.name "Denis Panfilov"
+          git config user.email "gh@flaticols.dev"
+          git add nix/gorefact.nix
+          git diff --cached --quiet || git commit -m "nix: update gorefact to ${{ github.ref_name }}"
+          git push

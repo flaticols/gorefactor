@@ -1,17 +1,29 @@
 # gorefact
 
-`gorefact` is a Go call-graph explorer with dependency rule checks and a Neovim UI for browsing callers, violations, and function details.
+`gorefact` is a Go call-graph and dependency explorer. It shows you everything that imports or references a package, type, function, const, or var — and checks architectural rules defined in a TOML file.
 
 ## Features
 
-- `gorefact check` for batch dependency violation checks
-- `gorefact serve` for a long-lived JSON-RPC server used by Neovim
-- TOML deny rules
-- text, json, markdown, and quickfix output formats
-- Neovim search, tree, and detail buffers
+- `gorefact inspect` — interactive TUI or structured output showing full reference trees for any package/symbol
+- `gorefact check` — batch dependency violation check against TOML deny rules
+- `gorefact serve` — long-lived JSON-RPC server for the Neovim plugin
+- text, JSON, markdown, and quickfix output formats
 - optional `--filter-pkg` scoping for large repositories
+- Neovim plugin with search, tree, and detail buffers
 
 ## Install
+
+### Nix
+
+```bash
+nix profile install github:flaticols/gorefactor
+```
+
+Or add to your flake inputs:
+
+```nix
+inputs.gorefactor.url = "github:flaticols/gorefactor";
+```
 
 ### Homebrew
 
@@ -22,34 +34,96 @@ brew install flaticols/apps/gorefact
 
 ### Go
 
-Install the latest tagged module version:
-
 ```bash
 go install go.flaticols.dev/gorefactor/cmd/gorefact@latest
 ```
 
-From a local checkout, use:
+### Release archives
+
+Tagged releases publish `tar.gz` archives for macOS (`amd64`, `arm64`) on the [releases page](https://github.com/flaticols/gorefactor/releases).
+
+---
+
+## inspect
+
+`gorefact inspect` answers: *who imports this, and where exactly?*
 
 ```bash
-go install ./cmd/gorefact
+# Open TUI (on a TTY)
+gorefact inspect github.com/acme/tasks
+gorefact inspect github.com/acme/tasks.Engine
+gorefact inspect github.com/acme/tasks.Engine.Calc
+
+# Short suffix — resolves to the first matching package
+gorefact inspect tasks
+gorefact inspect graph
+
+# Structured output (auto-disables TUI)
+gorefact inspect github.com/acme/tasks --format json | jq .
+gorefact inspect github.com/acme/tasks --format text | less
+gorefact inspect github.com/acme/tasks --format md
+gorefact inspect github.com/acme/tasks --format qf
+
+# Bare invocation on a TTY opens the TUI with an empty search box
+gorefact
 ```
 
-Both forms install `gorefact` into `GOBIN` or `$(go env GOPATH)/bin`.
+### TUI keybindings
 
-### Release assets
+The TUI uses vim-style modal navigation.
 
-Tagged releases also publish prebuilt archives and Linux packages:
+| Key | Action |
+|-----|--------|
+| `/` | Enter search mode — type a package path or suffix |
+| `Enter` | Submit search |
+| `Esc` | Exit search mode |
+| `j` / `k` | Navigate down / up in active pane |
+| `h` / `l` or `Tab` | Switch between Symbols and References panes |
+| `g` | Toggle grouping: by package ↔ by file |
+| `f` | Toggle violations-only filter |
+| `q` | Quit |
+| `ctrl+q` | Quit (from any mode) |
 
-- `tar.gz` archives for macOS (`amd64`, `arm64`)
+---
 
-Required external tools:
+## check
 
-- `gorefact` on `PATH`
-- `go` on `PATH`
+```bash
+gorefact check --rules gorefact.rules.toml ./...
+gorefact check --rules gorefact.rules.toml --format json ./...
+gorefact check --rules gorefact.rules.toml --format qf ./...
+gorefact check --rules gorefact.rules.toml --filter-pkg tasks ./...
+```
 
-### Neovim 0.12 with `vim.pack`
+---
 
-Install from the remote repository:
+## Rules
+
+`gorefact.rules.toml`:
+
+```toml
+[[deny]]
+from = "tasks"
+to = "adapters"
+reason = "tasks must not depend on adapters"
+
+[[deny]]
+from = "handler"
+to = "repository"
+reason = "handlers must go through service layer"
+```
+
+Validate without loading packages:
+
+```bash
+gorefact validate-rules --rules gorefact.rules.toml
+```
+
+---
+
+## Neovim plugin
+
+### Install (Neovim 0.12+)
 
 ```lua
 local plug = vim.pack.add({
@@ -65,43 +139,7 @@ require("gorefact").setup({
 })
 ```
 
-For local development from a checkout on disk:
-
-```lua
-local plug = vim.pack.add({
-  { src = "/Users/flaticols/Developer/gorefactor", name = "gorefactor-dev" },
-})[1]
-
-vim.opt.rtp:append(plug.path .. "/nvim")
-
-require("gorefact").setup({
-  binary = vim.fn.exepath("gorefact"),
-  dir = vim.fn.getcwd(),
-  rules = "gorefact.rules.toml",
-  patterns = { "./..." },
-})
-```
-
-If you are iterating on a specific package area in a large monorepo, pass `filter_pkg`:
-
-```lua
-require("gorefact").setup({
-  binary = vim.fn.exepath("gorefact"),
-  rules = "gorefact.rules.toml",
-  patterns = { "./..." },
-  filter_pkg = "tasks",
-})
-```
-
-`vim.pack.add()` installs and loads the Git repository, and `plug.path .. "/nvim"` adds the actual plugin runtime directory from this repo layout.
-
-The plugin module name is:
-
-```lua
-require("gorefact")
-```
-
-Default config:
+### Default config
 
 ```lua
 require("gorefact").setup({
@@ -121,94 +159,7 @@ require("gorefact").setup({
 })
 ```
 
-If you want in-editor help, run:
-
-```vim
-:helptags ALL
-:help gorefact
-```
-
-## Rules
-
-Example `gorefact.rules.toml`:
-
-```toml
-[[deny]]
-from = "tasks"
-to = "adapters"
-reason = "tasks must not depend on adapters"
-
-[[deny]]
-from = "handler"
-to = "repository"
-reason = "handlers must go through service layer"
-```
-
-Validate rules without building the graph:
-
-```bash
-gorefact validate-rules --rules gorefact.rules.toml
-```
-
-## CLI
-
-Check a repository:
-
-```bash
-gorefact check --rules gorefact.rules.toml ./...
-```
-
-Quickfix output for Neovim:
-
-```bash
-gorefact check --rules gorefact.rules.toml --format qf ./...
-```
-
-Scope loading to a package fragment:
-
-```bash
-gorefact check --rules gorefact.rules.toml --filter-pkg tasks ./...
-```
-
-Run the RPC server:
-
-```bash
-gorefact serve --rules gorefact.rules.toml ./...
-```
-
-Show the binary version:
-
-```bash
-gorefact version
-```
-
-`gorefact version` reads Go build metadata via `debug.ReadBuildInfo()`.
-
-- `go install ...@version` builds usually report the module version
-- release binaries built from a tagged checkout may fall back to the embedded VCS revision when the module version is unavailable
-
-## Release
-
-This repo ships with a release pipeline modeled on `flaticols/bump`:
-
-- `.github/workflows/test-and-tag.yml` runs tests and builds on PRs and pushes to `main`
-- `.github/workflows/release.yml` runs on pushed tags and invokes GoReleaser
-- `.goreleaser.yaml` publishes macOS release archives and a Homebrew formula update to `flaticols/homebrew-apps`
-
-To publish a release:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-Required GitHub secret:
-
-- `GORELEASER_GITHUB_TOKEN` with access to this repo and `flaticols/homebrew-apps`
-
-## Neovim
-
-Available commands:
+### Commands
 
 - `:GorefactExplore`
 - `:GorefactCallers`
@@ -217,45 +168,42 @@ Available commands:
 - `:GorefactRestart`
 - `:checkhealth gorefact`
 
-Default keymaps:
+---
 
-- `<leader>Re` search
-- `<leader>Rc` callers
-- `<leader>RC` alternate tree grouping entrypoint
-- `<leader>Rv` async check
+## serve
 
-Statusline helper:
+Starts the JSON-RPC server consumed by the Neovim plugin:
 
-```lua
-require("gorefact").statusline()
+```bash
+gorefact serve --rules gorefact.rules.toml ./...
 ```
 
-## UI Preview
+---
 
-Search float:
+## Release pipeline
 
-```text
-gorefact search
-TaxEng
+- `.github/workflows/release.yml` triggers on pushed tags and runs GoReleaser
+- GoReleaser publishes macOS archives, updates the Homebrew formula in `flaticols/homebrew-apps`, and updates `nix/gorefact.nix` in this repo
+- Required GitHub secret: `GORELEASER_GITHUB_TOKEN` (access to this repo and `flaticols/homebrew-apps`)
 
-Results:
-  github.com/acme/adapters.(*TaxEngine).Calculate  [12 callers]
-  github.com/acme/adapters.*TaxEngine              [5 methods]
+To publish a release:
+
+```bash
+jj tag create v0.1.0
+jj git push --tag v0.1.0
 ```
 
-Tree and detail:
-
-```text
-gorefact-tree                    gorefact-detail
-▼ Calculate                      Package: github.com/acme/tasks
-  ⚠ github.com/acme/tasks.Run    Function: Run
-  ✓ github.com/acme/service.Do   File: tasks/run.go:42
-```
+---
 
 ## Development
 
-Run tests:
-
 ```bash
+# Run tests
 GOCACHE=/tmp/gocache go test ./...
+
+# Build and install locally
+go install ./cmd/gorefact
+
+# Enter nix dev shell
+nix develop
 ```

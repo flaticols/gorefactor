@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.8] - 2026-04-19
+
+### Added
+- Vim-style modal TUI navigation: `/` to enter search, `hjkl` for movement, `g`/`f` work in normal mode (no longer eaten by search box)
+- Suffix package matching: `gorefact inspect graph` resolves to the first package ending in `/graph`
+- `nix/gorefact.nix` binary derivation, auto-updated by GoReleaser on each release
+- `flake.nix` now exposes `packages.default` (pre-built binary) and `packages.source` (build from source)
+- GoReleaser nix publisher wired up in `.goreleaser.yaml`
+
+## [0.0.7] - 2026-04-19
+
+### Added
+- `--format` flag implicitly disables TUI (no need for `--no-tui`)
+- Package paths and directory args (`.`, `./...`, `github.com/...`) route directly to inspect without the `inspect` subcommand
+
 ## [0.0.6] - 2026-04-19
 
 ### Added

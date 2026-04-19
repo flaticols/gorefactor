@@ -5,23 +5,27 @@
 
   outputs = { self, nixpkgs }:
     let
-      systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+      systems = [ "x86_64-darwin" "aarch64-darwin" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in {
       packages = forAllSystems (pkgs: {
-        default = pkgs.buildGoModule {
+        # Pre-built binary from the latest release (auto-updated by GoReleaser).
+        default = pkgs.callPackage ./nix/gorefact.nix {};
+
+        # Build from source — useful for development or patching.
+        source = pkgs.buildGoModule {
           pname = "gorefact";
-          version = "0.0.7";
+          version = "0.0.8";
           src = ./.;
           go = pkgs.go;
           vendorHash = "sha256-cMZ0bNUDtTAnp2PdpdS+Ia53qm+SHe3AqMf/pH9gykU=";
           doCheck = false; # tests call packages.Load which requires network
           meta = with pkgs.lib; {
-            description = "Inspect Go package dependencies, reference trees, and architectural rule violations";
+            description = "Go call-graph explorer and architectural dependency rule checker";
             homepage = "https://github.com/flaticols/gorefactor";
             license = licenses.mit;
             mainProgram = "gorefact";
-            platforms = platforms.unix;
+            platforms = platforms.darwin;
           };
         };
       });
