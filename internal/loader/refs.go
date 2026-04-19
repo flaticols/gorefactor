@@ -142,10 +142,26 @@ func WalkMemberRefs(pkgPath, typeName string, importerPaths []string, cfg Config
 	if err != nil {
 		return nil, err
 	}
+	// seen dedupes (memName, file, line, col) entries across Selections + Uses.
+	type edgeKey struct {
+		mem, file string
+		line, col int
+	}
+	seen := make(map[edgeKey]bool)
+	add := func(memName string, e graph.Edge) {
+		k := edgeKey{memName, e.File, e.Line, e.Col}
+		if seen[k] {
+			return
+		}
+		seen[k] = true
+		out[memName] = append(out[memName], e)
+	}
+
 	for _, ipkg := range pkgs {
 		if ipkg.TypesInfo == nil {
 			continue
 		}
+		// Pass 1: Selections — direct `x.Method` / `x.Field` / method expressions.
 		for selExpr, sel := range ipkg.TypesInfo.Selections {
 			recv := sel.Recv()
 			if ptr, ok := recv.(*types.Pointer); ok {
@@ -164,10 +180,56 @@ func WalkMemberRefs(pkgPath, typeName string, importerPaths []string, cfg Config
 			if _, isFunc := sel.Obj().(*types.Func); isFunc {
 				kind = graph.EdgeCall
 			}
-			out[memName] = append(out[memName], graph.Edge{
+			add(memName, graph.Edge{
 				Kind:       kind,
 				CallerPkg:  ipkg.PkgPath,
 				CallerFunc: enclosingFuncName(ipkg.Fset, ipkg.Syntax, selExpr.Pos()),
+				File:       cleanPath(cfg.Dir, pos.Filename),
+				Line:       pos.Line,
+				Col:        pos.Column,
+			})
+		}
+		// Pass 2: Uses — catches identifier-level references the selection pass may miss
+		// (e.g. method values captured via type assertions, embedded-field promotions,
+		// or uses that appear as bare idents after parsing).
+		for ident, obj := range ipkg.TypesInfo.Uses {
+			var memName string
+			var kind graph.EdgeKind
+			switch o := obj.(type) {
+			case *types.Func:
+				sig, ok := o.Type().(*types.Signature)
+				if !ok || sig.Recv() == nil {
+					continue
+				}
+				recv := sig.Recv().Type()
+				if ptr, ok := recv.(*types.Pointer); ok {
+					recv = ptr.Elem()
+				}
+				named, ok := recv.(*types.Named)
+				if !ok || named.Obj() == nil || named.Obj().Pkg() == nil {
+					continue
+				}
+				if named.Obj().Pkg().Path() != pkgPath || named.Obj().Name() != typeName {
+					continue
+				}
+				memName = o.Name()
+				kind = graph.EdgeCall
+			case *types.Var:
+				if !o.IsField() || o.Pkg() == nil {
+					continue
+				}
+				// A field's owning type isn't directly reachable from *types.Var,
+				// so we cannot definitively match without scanning the struct.
+				// Handled by Selections pass; skip here.
+				continue
+			default:
+				continue
+			}
+			pos := ipkg.Fset.Position(ident.Pos())
+			add(memName, graph.Edge{
+				Kind:       kind,
+				CallerPkg:  ipkg.PkgPath,
+				CallerFunc: enclosingFuncName(ipkg.Fset, ipkg.Syntax, ident.Pos()),
 				File:       cleanPath(cfg.Dir, pos.Filename),
 				Line:       pos.Line,
 				Col:        pos.Column,

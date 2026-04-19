@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.18] - 2026-04-19
+
+### Added
+- Struct root is now selectable in the struct member view: navigating to the top of the tree (position 0) highlights the struct itself and the right panel shows references to the whole type (not just to one member); `e` opens the struct declaration
+
+### Fixed
+- References panel going empty after `Esc` back from struct view: now rebuilds the symbol-level reference tree on return
+- Per-member reference walking now supplements `types.Info.Selections` with `types.Info.Uses` so method references that appear as bare identifiers (method values, promoted embedded methods) are also captured; results are deduped by (member, file, line, col)
+
 ## [0.0.17] - 2026-04-19
 
 ### Fixed

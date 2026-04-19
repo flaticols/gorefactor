@@ -346,6 +346,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.structPkg = ""
 				m.structName = ""
 				m.structIdx = 0
+				m = updateTree(m)
 				return m, nil
 			}
 			return m, nil
@@ -452,7 +453,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch m.active {
 			case paneList:
 				if m.view == viewStruct {
-					if m.structIdx < len(m.structMembers)-1 {
+					if m.structIdx < len(m.structMembers) {
 						m.structIdx++
 						m = updateMemberTree(m)
 					}
@@ -508,19 +509,27 @@ func buildSymbolList(m Model) Model {
 
 
 func updateMemberTree(m Model) Model {
-	if m.structIdx >= len(m.structMembers) {
-		m.treeLines = nil
-		m.treeRefs = nil
-		return m
-	}
 	violPkgs := map[string]bool{}
 	if m.result != nil {
 		for _, v := range m.result.Violations {
 			violPkgs[v.FromPkg] = true
 		}
 	}
-	edges := m.structMembers[m.structIdx].Edges
-	m.treeLines, m.treeRefs = buildTreeLines(edges, 0, m.group, m.violOnly, violPkgs, m.shortPkg)
+	// structIdx 0 = whole struct; 1..N = members[i-1]
+	var edges []graph.Edge
+	if m.structIdx == 0 && m.result != nil && len(m.symbols) > 0 {
+		edges = m.result.Edges
+		m.treeLines, m.treeRefs = buildTreeLines(edges, m.symbols[0].sym.ID, m.group, m.violOnly, violPkgs, m.shortPkg)
+	} else {
+		idx := m.structIdx - 1
+		if idx < 0 || idx >= len(m.structMembers) {
+			m.treeLines = nil
+			m.treeRefs = nil
+			return m
+		}
+		edges = m.structMembers[idx].Edges
+		m.treeLines, m.treeRefs = buildTreeLines(edges, 0, m.group, m.violOnly, violPkgs, m.shortPkg)
+	}
 	m.treeIdx = 0
 	return m
 }
@@ -682,9 +691,6 @@ func (m Model) renderStructList(w, h int) string {
 	if m.structMembers == nil {
 		return lipgloss.JoinVertical(lipgloss.Left, padRight(title, w), styleHelp.Render("  loading..."))
 	}
-	if len(m.structMembers) == 0 {
-		return lipgloss.JoinVertical(lipgloss.Left, padRight(title, w), styleHelp.Render("  (no exported members)"))
-	}
 
 	labels := make([]string, len(m.structMembers))
 	for i, mem := range m.structMembers {
@@ -705,17 +711,30 @@ func (m Model) renderStructList(w, h int) string {
 		labels[i] = body + kind + refN
 	}
 
-	selIdx := m.structIdx
+	// Root (whole-struct) row label: shows total ref count.
+	rootRefs := 0
+	if m.result != nil {
+		rootRefs = len(m.result.Edges)
+	}
+	rootLabel := m.structName + styleDim.Render(fmt.Sprintf(" [%d]", rootRefs))
 	active := m.active == paneList
-	t := tree.New().Root(m.structName).Enumerator(tree.RoundedEnumerator)
+	if m.structIdx == 0 && active {
+		rootLabel = styleSelected.Render(rootLabel)
+	} else if m.structIdx == 0 {
+		rootLabel = lipgloss.NewStyle().Bold(true).Render(rootLabel)
+	}
+
+	// Selected member index in the tree.Child list (structIdx 1..N → 0..N-1).
+	selChild := m.structIdx - 1
+	t := tree.New().Root(rootLabel).Enumerator(tree.RoundedEnumerator)
 	for _, lbl := range labels {
 		t.Child(lbl)
 	}
 	t.ItemStyleFunc(func(_ tree.Children, i int) lipgloss.Style {
-		if i == selIdx && active {
+		if i == selChild && active {
 			return lipgloss.NewStyle().Background(lipgloss.Color("63")).Foreground(lipgloss.Color("230"))
 		}
-		if i == selIdx {
+		if i == selChild {
 			return lipgloss.NewStyle().Bold(true)
 		}
 		return lipgloss.NewStyle()
@@ -725,7 +744,7 @@ func (m Model) renderStructList(w, h int) string {
 	m.listVP.Width = w
 	m.listVP.Height = h - 1
 	m.listVP.SetContent(content)
-	ensureVisible(&m.listVP, selIdx+1) // +1 accounts for root line
+	ensureVisible(&m.listVP, m.structIdx)
 	return lipgloss.JoinVertical(lipgloss.Left, padRight(title, w), m.listVP.View())
 }
 
@@ -810,8 +829,16 @@ func (m Model) currentRef() (file string, line int) {
 		}
 	case paneList:
 		if m.view == viewStruct {
-			if m.structIdx < len(m.structMembers) {
-				mem := m.structMembers[m.structIdx]
+			if m.structIdx == 0 {
+				if len(m.symbols) > 0 {
+					s := m.symbols[0].sym
+					return s.File, s.Line
+				}
+				return "", 0
+			}
+			idx := m.structIdx - 1
+			if idx >= 0 && idx < len(m.structMembers) {
+				mem := m.structMembers[idx]
 				return mem.File, mem.Line
 			}
 			return "", 0
