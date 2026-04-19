@@ -1,6 +1,6 @@
 module go.flaticols.dev/gorefactor
 
-go 1.26.2
+go 1.26
 
 require (
 	github.com/charmbracelet/bubbles v1.0.0
