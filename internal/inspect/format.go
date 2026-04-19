@@ -11,7 +11,6 @@ import (
 
 // FormatOptions controls non-TTY output rendering.
 type FormatOptions struct {
-	BaseDir  string
 	ViolOnly bool
 }
 
@@ -37,6 +36,7 @@ func FormatText(res *InspectResult, opts FormatOptions) string {
 	groups := groupEdgesByPkg(res.Edges)
 	pkgs := sortedPkgKeys(groups)
 	violPkgs := violationPkgSet(res.Violations)
+	names := symNames(res)
 
 	for _, pkg := range pkgs {
 		edges := groups[pkg]
@@ -60,7 +60,7 @@ func FormatText(res *InspectResult, opts FormatOptions) string {
 			} else if violPkgs[e.CallerPkg] {
 				marker = "✗"
 			}
-			sym := symbolName(res, e.Callee)
+			sym := symName(names, e.Callee)
 			b.WriteString(fmt.Sprintf("    %s %s:%d  %s %s\n",
 				marker, e.File, e.Line, string(e.Kind), sym))
 		}
@@ -96,12 +96,13 @@ type jsonOutput struct {
 
 // FormatJSON returns JSON bytes for the inspect result.
 func FormatJSON(res *InspectResult) ([]byte, error) {
+	names := symNames(res)
 	edges := make([]jsonEdge, len(res.Edges))
 	for i, e := range res.Edges {
 		edges[i] = jsonEdge{
 			CallerPkg: e.CallerPkg,
 			SymbolID:  e.Callee,
-			Symbol:    symbolName(res, e.Callee),
+			Symbol:    symName(names, e.Callee),
 			Kind:      string(e.Kind),
 			File:      e.File,
 			Line:      e.Line,
@@ -142,10 +143,11 @@ func FormatMarkdown(res *InspectResult) string {
 
 	b.WriteString("### Reference Tree\n\n```\n")
 	groups := groupEdgesByPkg(res.Edges)
+	names := symNames(res)
 	for _, pkg := range sortedPkgKeys(groups) {
 		b.WriteString(fmt.Sprintf("%s\n", pkg))
 		for _, e := range groups[pkg] {
-			sym := symbolName(res, e.Callee)
+			sym := symName(names, e.Callee)
 			b.WriteString(fmt.Sprintf("  %s:%d  %s\n", e.File, e.Line, sym))
 		}
 	}
@@ -156,12 +158,13 @@ func FormatMarkdown(res *InspectResult) string {
 // FormatQuickfix returns quickfix-format lines (file:line:col: message).
 func FormatQuickfix(res *InspectResult) string {
 	var b strings.Builder
+	names := symNames(res)
 	violPkgs := violationPkgSet(res.Violations)
 	for _, e := range res.Edges {
 		if e.File == "" || e.Line == 0 {
 			continue
 		}
-		sym := symbolName(res, e.Callee)
+		sym := symName(names, e.Callee)
 		msg := fmt.Sprintf("%s.%s (%s)", res.PkgPath, sym, string(e.Kind))
 		if violPkgs[e.CallerPkg] {
 			msg += " [DENY]"
@@ -171,11 +174,19 @@ func FormatQuickfix(res *InspectResult) string {
 	return b.String()
 }
 
-func symbolName(res *InspectResult, id int) string {
+// symNames builds a symbol-ID→name map for fast lookups.
+func symNames(res *InspectResult) map[int]string {
+	m := make(map[int]string, len(res.Symbols))
 	for _, s := range res.Symbols {
-		if s.ID == id {
-			return s.Name
-		}
+		m[s.ID] = s.Name
+	}
+	return m
+}
+
+// symName returns the symbol name for id, or "(id=N)" if not found.
+func symName(names map[int]string, id int) string {
+	if n, ok := names[id]; ok {
+		return n
 	}
 	return fmt.Sprintf("(id=%d)", id)
 }
