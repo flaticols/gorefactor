@@ -3,211 +3,585 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>gorefact — Go call-graph explorer with dependency rule checks</title>
+<title>gorefact — Go call-graph explorer</title>
 <meta name="description" content="gorefact is a Go call-graph and dependency explorer. Show reference trees for any package or symbol and enforce architectural rules via TOML.">
+<meta name="color-scheme" content="dark">
 <style>
   :root {
-    --bg: #0f1115;
-    --fg: #e6e8eb;
-    --muted: #9aa3af;
-    --accent: #7cc4ff;
-    --accent-2: #b7f3a6;
-    --card: #161a21;
-    --border: #232833;
-    --code-bg: #0a0c10;
+    --bg: #0a0b0f;
+    --bg-2: #10121a;
+    --surface: rgba(255, 255, 255, 0.04);
+    --surface-2: rgba(255, 255, 255, 0.06);
+    --border: rgba(255, 255, 255, 0.08);
+    --border-strong: rgba(255, 255, 255, 0.14);
+    --fg: #e8eaf0;
+    --fg-dim: #a8aebb;
+    --fg-muted: #6b7280;
+    --accent: #8b7cf6;
+    --accent-2: #5eead4;
+    --accent-3: #fb7185;
+    --ok: #34d399;
+    --code-bg: #05060a;
+    --radius: 12px;
+    --radius-sm: 8px;
+    --shadow: 0 1px 0 rgba(255,255,255,0.04) inset, 0 30px 60px -30px rgba(0,0,0,0.6);
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco,
+            Consolas, "Liberation Mono", monospace;
+    --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+            "Helvetica Neue", Arial, sans-serif;
   }
+
   * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
   html, body { margin: 0; padding: 0; }
+
   body {
     background: var(--bg);
     color: var(--fg);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-                 "Helvetica Neue", Arial, sans-serif;
+    font-family: var(--sans);
     line-height: 1.6;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
   }
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  code, pre, kbd {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-                 "Liberation Mono", monospace;
-    font-size: 0.92em;
-  }
-  .container { max-width: 860px; margin: 0 auto; padding: 0 24px; }
 
-  header {
-    padding: 72px 0 40px;
+  /* Ambient background: soft gradient blobs + subtle grid */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -2;
+    background:
+      radial-gradient(ellipse 60% 50% at 15% 0%, rgba(139, 124, 246, 0.18), transparent 60%),
+      radial-gradient(ellipse 50% 40% at 85% 10%, rgba(94, 234, 212, 0.12), transparent 60%),
+      radial-gradient(ellipse 40% 30% at 50% 100%, rgba(251, 113, 133, 0.08), transparent 60%),
+      var(--bg);
+  }
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background-image:
+      linear-gradient(to right, rgba(255,255,255,0.025) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255,255,255,0.025) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, black 30%, transparent 80%);
+    -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, black 30%, transparent 80%);
+    pointer-events: none;
+  }
+
+  a { color: var(--accent-2); text-decoration: none; transition: color .15s; }
+  a:hover { color: var(--fg); }
+
+  code, pre, kbd { font-family: var(--mono); font-size: 0.9em; }
+
+  .wrap { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+
+  /* Nav */
+  nav {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    backdrop-filter: saturate(160%) blur(12px);
+    -webkit-backdrop-filter: saturate(160%) blur(12px);
+    background: rgba(10, 11, 15, 0.6);
     border-bottom: 1px solid var(--border);
   }
-  header .eyebrow {
-    color: var(--muted);
-    font-size: 0.85em;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    margin-bottom: 12px;
+  nav .wrap {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 56px;
   }
-  h1 {
-    font-size: 2.6em;
-    margin: 0 0 12px;
-    letter-spacing: -0.02em;
-  }
-  h1 .mono { color: var(--accent-2); font-family: ui-monospace, Menlo, monospace; }
-  .tagline {
-    color: var(--muted);
-    font-size: 1.15em;
-    margin: 0 0 28px;
-    max-width: 640px;
-  }
-  .cta {
+  .brand {
     display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--mono);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--fg);
+  }
+  .brand:hover { color: var(--fg); }
+  .brand-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    box-shadow: 0 0 16px rgba(139, 124, 246, 0.6);
+  }
+  .nav-links { display: flex; gap: 22px; align-items: center; }
+  .nav-links a { color: var(--fg-dim); font-size: 0.92em; }
+  .nav-links a:hover { color: var(--fg); }
+  @media (max-width: 560px) { .nav-links a:not(.btn) { display: none; } }
+
+  /* Hero */
+  .hero { padding: 96px 0 72px; }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--fg-dim);
+    font-size: 0.8em;
+    letter-spacing: 0.02em;
+    margin-bottom: 24px;
+  }
+  .eyebrow .pulse {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--ok);
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.7);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.6); }
+    70% { box-shadow: 0 0 0 8px rgba(52, 211, 153, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+  }
+
+  h1 {
+    font-size: clamp(2.4rem, 6.5vw, 4rem);
+    line-height: 1.05;
+    letter-spacing: -0.035em;
+    margin: 0 0 20px;
+    font-weight: 700;
+  }
+  h1 .grad {
+    background: linear-gradient(120deg, var(--accent) 0%, var(--accent-2) 60%, var(--accent-3) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .lede {
+    color: var(--fg-dim);
+    font-size: clamp(1.05rem, 1.6vw, 1.2rem);
+    max-width: 620px;
+    margin: 0 0 36px;
+  }
+
+  .cta {
+    display: flex;
     gap: 10px;
     flex-wrap: wrap;
+    align-items: center;
   }
   .btn {
-    display: inline-block;
-    padding: 9px 16px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--card);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
     color: var(--fg);
-    font-size: 0.95em;
+    font-size: 0.92em;
+    font-weight: 500;
+    transition: transform .15s, background .15s, border-color .15s;
+  }
+  .btn:hover {
+    background: var(--surface-2);
+    border-color: rgba(255,255,255,0.22);
+    color: var(--fg);
+    transform: translateY(-1px);
   }
   .btn.primary {
-    background: var(--accent);
-    color: #0a0c10;
-    border-color: var(--accent);
+    background: linear-gradient(135deg, var(--accent), #6d5fe0);
+    border-color: transparent;
+    color: #fff;
+    box-shadow: 0 8px 24px -8px rgba(139, 124, 246, 0.5);
+  }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn .arrow { transition: transform .15s; }
+  .btn:hover .arrow { transform: translateX(2px); }
+
+  /* Terminal preview */
+  .terminal {
+    margin-top: 56px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: rgba(5, 6, 10, 0.7);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+  .term-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.02);
+  }
+  .term-dot { width: 11px; height: 11px; border-radius: 50%; }
+  .term-dot.r { background: #ff5f57; }
+  .term-dot.y { background: #febc2e; }
+  .term-dot.g { background: #28c840; }
+  .term-title {
+    margin-left: auto;
+    color: var(--fg-muted);
+    font-family: var(--mono);
+    font-size: 0.78em;
+  }
+  .term-body {
+    padding: 18px 20px 22px;
+    font-family: var(--mono);
+    font-size: 0.86em;
+    line-height: 1.7;
+    overflow-x: auto;
+  }
+  .term-body .prompt { color: var(--accent-2); user-select: none; }
+  .term-body .cmd { color: var(--fg); }
+  .term-body .flag { color: var(--accent); }
+  .term-body .str { color: var(--accent-2); }
+  .term-body .out { color: var(--fg-dim); }
+  .term-body .bad { color: var(--accent-3); }
+  .term-body .ok  { color: var(--ok); }
+  .term-body .dim { color: var(--fg-muted); }
+
+  /* Sections */
+  section { padding: 80px 0; position: relative; }
+  section + section { border-top: 1px solid var(--border); }
+  .eyebrow-sm {
+    color: var(--accent-2);
+    font-family: var(--mono);
+    font-size: 0.78em;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin: 0 0 10px;
+  }
+  h2 {
+    font-size: clamp(1.6rem, 3vw, 2rem);
+    letter-spacing: -0.02em;
+    margin: 0 0 12px;
     font-weight: 600;
   }
-  .btn:hover { text-decoration: none; border-color: var(--accent); }
+  .section-lede { color: var(--fg-dim); max-width: 620px; margin: 0 0 36px; }
 
-  section { padding: 48px 0; border-bottom: 1px solid var(--border); }
-  section:last-of-type { border-bottom: 0; }
-  h2 {
-    font-size: 1.5em;
-    margin: 0 0 20px;
-    letter-spacing: -0.01em;
-  }
-  h3 {
-    font-size: 1.05em;
-    margin: 24px 0 10px;
-    color: var(--fg);
-  }
-
-  ul.features {
-    list-style: none;
-    padding: 0;
-    margin: 0;
+  /* Feature cards */
+  .cards {
     display: grid;
-    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px;
   }
-  ul.features li {
-    padding: 14px 16px;
-    background: var(--card);
+  .card {
+    padding: 20px;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--radius);
+    background: var(--surface);
+    transition: border-color .2s, transform .2s, background .2s;
   }
-  ul.features code {
+  .card:hover {
+    border-color: var(--border-strong);
+    background: var(--surface-2);
+    transform: translateY(-2px);
+  }
+  .card h3 {
+    margin: 0 0 6px;
+    font-size: 1rem;
+    font-family: var(--mono);
     color: var(--accent-2);
-    background: transparent;
-    padding: 0;
+    font-weight: 500;
   }
+  .card p { margin: 0; color: var(--fg-dim); font-size: 0.94em; }
 
+  /* Install tabs — CSS-only */
+  .tabs { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+  .tabs input { position: absolute; opacity: 0; pointer-events: none; }
+  .tabs-nav {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.015);
+    overflow-x: auto;
+  }
+  .tabs-nav label {
+    flex: 1;
+    min-width: 110px;
+    padding: 14px 18px;
+    text-align: center;
+    cursor: pointer;
+    color: var(--fg-dim);
+    font-size: 0.92em;
+    font-weight: 500;
+    border-bottom: 2px solid transparent;
+    transition: color .15s, border-color .15s, background .15s;
+    white-space: nowrap;
+  }
+  .tabs-nav label:hover { color: var(--fg); background: rgba(255,255,255,0.02); }
+  .tab-panel { display: none; padding: 24px; }
+  .tab-panel h4 {
+    margin: 0 0 8px;
+    font-size: 0.92em;
+    color: var(--fg-dim);
+    font-weight: 500;
+  }
+  .tab-panel h4:not(:first-child) { margin-top: 20px; }
+
+  #tab-brew:checked ~ .tabs-nav label[for="tab-brew"],
+  #tab-go:checked   ~ .tabs-nav label[for="tab-go"],
+  #tab-nix:checked  ~ .tabs-nav label[for="tab-nix"],
+  #tab-bin:checked  ~ .tabs-nav label[for="tab-bin"] {
+    color: var(--fg);
+    border-bottom-color: var(--accent);
+    background: var(--surface-2);
+  }
+  #tab-brew:checked ~ .tab-panel.brew,
+  #tab-go:checked   ~ .tab-panel.go,
+  #tab-nix:checked  ~ .tab-panel.nix,
+  #tab-bin:checked  ~ .tab-panel.bin { display: block; }
+
+  /* Code blocks with copy hint */
   pre {
     background: var(--code-bg);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     padding: 14px 16px;
     overflow-x: auto;
-    margin: 0 0 16px;
+    margin: 0 0 12px;
+    position: relative;
+    font-size: 0.88em;
+    line-height: 1.6;
   }
+  pre:last-child { margin-bottom: 0; }
+  pre .c { color: var(--fg-muted); }
+  pre .k { color: var(--accent); }
+  pre .s { color: var(--accent-2); }
   p code, li code {
-    background: var(--code-bg);
+    background: rgba(255,255,255,0.06);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: 5px;
     padding: 1px 6px;
+    font-size: 0.88em;
   }
 
-  footer {
-    color: var(--muted);
-    font-size: 0.9em;
-    padding: 32px 0 48px;
-    text-align: center;
+  /* Rule snippet side-by-side */
+  .split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
   }
-  footer a { color: var(--muted); }
+  @media (max-width: 720px) { .split { grid-template-columns: 1fr; } }
+  .split h4 {
+    margin: 0 0 8px;
+    font-size: 0.82em;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fg-muted);
+    font-weight: 600;
+  }
+
+  /* Footer */
+  footer {
+    padding: 40px 0 60px;
+    border-top: 1px solid var(--border);
+    color: var(--fg-muted);
+    font-size: 0.9em;
+  }
+  footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  footer a { color: var(--fg-dim); }
+
+  /* Motion safety */
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+    html { scroll-behavior: auto; }
+  }
 </style>
 </head>
 <body>
 
-<header>
-  <div class="container">
-    <div class="eyebrow">Go · Static analysis · TOML rules</div>
-    <h1><span class="mono">gorefact</span></h1>
-    <p class="tagline">
-      A Go call-graph and dependency explorer. Show reference trees for any
-      package or symbol, and enforce architectural rules defined in a TOML
-      file.
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#top">
+      <span class="brand-dot"></span>
+      gorefact
+    </a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#install">Install</a>
+      <a href="#rules">Rules</a>
+      <a class="btn" href="https://github.com/flaticols/gorefactor">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.6-.3-5.3-1.3-5.3-5.8 0-1.3.5-2.3 1.2-3.2-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2 1-.3 2-.4 3-.4s2 .1 3 .4C17.3 4.6 18.3 5 18.3 5c.7 1.6.2 2.8.1 3.1.8.9 1.2 1.9 1.2 3.2 0 4.5-2.7 5.5-5.3 5.8.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5Z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<div id="top"></div>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="eyebrow"><span class="pulse"></span> Go · Static analysis · TOML rules</span>
+    <h1>See every caller.<br><span class="grad">Enforce every rule.</span></h1>
+    <p class="lede">
+      <strong>gorefact</strong> is a Go call-graph and dependency explorer. Show
+      full reference trees for any package or symbol, and enforce architectural
+      rules defined in a simple TOML file.
     </p>
     <div class="cta">
-      <a class="btn primary" href="#install">Install</a>
-      <a class="btn" href="https://github.com/flaticols/gorefactor">GitHub</a>
-      <a class="btn" href="https://github.com/flaticols/gorefactor/releases">Releases</a>
+      <a class="btn primary" href="#install">
+        Install gorefact
+        <span class="arrow">→</span>
+      </a>
+      <a class="btn" href="https://github.com/flaticols/gorefactor">
+        Star on GitHub
+      </a>
+    </div>
+
+    <div class="terminal" aria-hidden="true">
+      <div class="term-bar">
+        <span class="term-dot r"></span>
+        <span class="term-dot y"></span>
+        <span class="term-dot g"></span>
+        <span class="term-title">~/my-service — gorefact check</span>
+      </div>
+      <pre class="term-body"><span class="prompt">$</span> <span class="cmd">gorefact check</span> <span class="flag">--rules</span> <span class="str">gorefact.rules.toml</span> ./...
+<span class="out">analyzed <span class="ok">142</span> packages · <span class="ok">3821</span> edges in <span class="ok">0.8s</span></span>
+
+<span class="bad">✗</span> <span class="cmd">tasks/engine.go:84</span>  <span class="dim">→</span>  <span class="cmd">adapters/postgres</span>
+    <span class="dim">rule:</span> tasks must not depend on adapters
+<span class="bad">✗</span> <span class="cmd">api/handler.go:33</span>   <span class="dim">→</span>  <span class="cmd">repository/users</span>
+    <span class="dim">rule:</span> handlers must go through service layer
+
+<span class="out"><span class="bad">2 violations</span> · exit 1</span></pre>
     </div>
   </div>
 </header>
 
-<section id="what">
-  <div class="container">
-    <h2>What it does</h2>
-    <ul class="features">
-      <li><code>gorefact inspect</code> — interactive TUI or structured output showing full reference trees for any package or symbol.</li>
-      <li><code>gorefact check</code> — batch dependency violation check against TOML <code>[[deny]]</code> rules.</li>
-      <li><code>gorefact serve</code> — long-lived JSON-RPC server consumed by the Neovim plugin.</li>
-      <li>Output formats: <code>text</code>, <code>json</code>, <code>md</code>, <code>qf</code> (quickfix).</li>
-      <li>Optional <code>--filter-pkg</code> scoping for large repositories.</li>
-    </ul>
+<section id="features">
+  <div class="wrap">
+    <p class="eyebrow-sm">What it does</p>
+    <h2>One binary. Three jobs.</h2>
+    <p class="section-lede">
+      An explorer for reference trees, a linter for your architecture, and a
+      long-lived server for editor integrations.
+    </p>
+
+    <div class="cards">
+      <div class="card">
+        <h3>gorefact inspect</h3>
+        <p>Interactive TUI or structured output showing full reference trees for any package or symbol.</p>
+      </div>
+      <div class="card">
+        <h3>gorefact check</h3>
+        <p>Batch dependency violation check against TOML <code>[[deny]]</code> rules.</p>
+      </div>
+      <div class="card">
+        <h3>gorefact serve</h3>
+        <p>Long-lived JSON-RPC server consumed by the first-party Neovim plugin.</p>
+      </div>
+      <div class="card">
+        <h3>Pick your format</h3>
+        <p>Text, JSON, Markdown, or Vim quickfix — pipe into <code>jq</code>, <code>less</code>, or your editor.</p>
+      </div>
+    </div>
   </div>
 </section>
 
 <section id="install">
-  <div class="container">
-    <h2>Install</h2>
+  <div class="wrap">
+    <p class="eyebrow-sm">Install</p>
+    <h2>Get gorefact in 30 seconds</h2>
+    <p class="section-lede">Pick the install path that matches your setup.</p>
 
-    <h3>Homebrew</h3>
-<pre><code>brew tap flaticols/apps
-brew install flaticols/apps/gorefact</code></pre>
+    <div class="tabs">
+      <input type="radio" name="tab" id="tab-brew" checked>
+      <input type="radio" name="tab" id="tab-go">
+      <input type="radio" name="tab" id="tab-nix">
+      <input type="radio" name="tab" id="tab-bin">
 
-    <h3>Go</h3>
-    <p>Install globally with <code>go install</code>:</p>
-<pre><code>go install go.flaticols.dev/gorefactor/cmd/gorefact@latest</code></pre>
-    <p>Or pin it per-module as a Go tool dependency (Go 1.24+):</p>
-<pre><code>go get -tool go.flaticols.dev/gorefactor/cmd/gorefact@latest
-go tool gorefact inspect ./...</code></pre>
+      <div class="tabs-nav">
+        <label for="tab-brew">Homebrew</label>
+        <label for="tab-go">Go</label>
+        <label for="tab-nix">Nix</label>
+        <label for="tab-bin">Binary</label>
+      </div>
 
-    <h3>Nix</h3>
-<pre><code>nix profile install github:flaticols/gorefactor</code></pre>
-    <p>Or add it as a flake input:</p>
-<pre><code>inputs.gorefactor.url = "github:flaticols/gorefactor";</code></pre>
+      <div class="tab-panel brew">
+        <h4>Tap the repo and install:</h4>
+<pre><span class="k">brew</span> tap flaticols/apps
+<span class="k">brew</span> install flaticols/apps/gorefact</pre>
+      </div>
 
-    <h3>Release archives</h3>
-    <p>Tagged releases publish <code>tar.gz</code> archives for macOS (<code>amd64</code>, <code>arm64</code>) on the <a href="https://github.com/flaticols/gorefactor/releases">releases page</a>.</p>
+      <div class="tab-panel go">
+        <h4>Install globally with <code>go install</code>:</h4>
+<pre><span class="k">go</span> install go.flaticols.dev/gorefactor/cmd/gorefact@latest</pre>
+        <h4>Or pin it per-module as a Go tool dependency <span style="color:var(--fg-muted)">(Go 1.24+)</span>:</h4>
+<pre><span class="k">go</span> get -tool go.flaticols.dev/gorefactor/cmd/gorefact@latest
+<span class="k">go</span> tool gorefact inspect ./...</pre>
+      </div>
+
+      <div class="tab-panel nix">
+        <h4>Install into your profile:</h4>
+<pre><span class="k">nix</span> profile install github:flaticols/gorefactor</pre>
+        <h4>Or wire it up as a flake input:</h4>
+<pre>inputs.gorefactor.url = <span class="s">"github:flaticols/gorefactor"</span>;</pre>
+      </div>
+
+      <div class="tab-panel bin">
+        <h4>macOS archives (<code>amd64</code>, <code>arm64</code>):</h4>
+        <p style="margin:0;color:var(--fg-dim)">
+          Download the latest <code>.tar.gz</code> from the
+          <a href="https://github.com/flaticols/gorefactor/releases">releases page</a>,
+          extract, and drop <code>gorefact</code> onto your <code>$PATH</code>.
+        </p>
+      </div>
+    </div>
   </div>
 </section>
 
-<section id="next">
-  <div class="container">
-    <h2>Next steps</h2>
-    <ul class="features">
-      <li><a href="https://github.com/flaticols/gorefactor#inspect">Inspect a package or symbol</a></li>
-      <li><a href="https://github.com/flaticols/gorefactor#check">Check dependency rules</a></li>
-      <li><a href="https://github.com/flaticols/gorefactor#rules">Write rule files</a></li>
-      <li><a href="https://github.com/flaticols/gorefactor#neovim-plugin">Neovim plugin</a></li>
-    </ul>
+<section id="rules">
+  <div class="wrap">
+    <p class="eyebrow-sm">Rules</p>
+    <h2>Describe your architecture in TOML</h2>
+    <p class="section-lede">
+      A <code>gorefact.rules.toml</code> at the repo root is all you need.
+      Rules match against the short package name — no regex, no AST.
+    </p>
+
+    <div class="split">
+      <div>
+        <h4>gorefact.rules.toml</h4>
+<pre>[[<span class="k">deny</span>]]
+from   = <span class="s">"tasks"</span>
+to     = <span class="s">"adapters"</span>
+reason = <span class="s">"tasks must not depend on adapters"</span>
+
+[[<span class="k">deny</span>]]
+from   = <span class="s">"handler"</span>
+to     = <span class="s">"repository"</span>
+reason = <span class="s">"handlers must go through service layer"</span></pre>
+      </div>
+      <div>
+        <h4>Run it</h4>
+<pre><span class="c"># validate the rules file itself</span>
+<span class="k">gorefact</span> validate-rules \
+  --rules gorefact.rules.toml
+
+<span class="c"># check the whole module</span>
+<span class="k">gorefact</span> check \
+  --rules gorefact.rules.toml ./...
+
+<span class="c"># editor-friendly quickfix</span>
+<span class="k">gorefact</span> check --format qf ./...</pre>
+      </div>
+    </div>
   </div>
 </section>
 
 <footer>
-  <div class="container">
-    MIT licensed · <a href="https://github.com/flaticols/gorefactor">github.com/flaticols/gorefactor</a>
+  <div class="wrap">
+    <div>MIT licensed · Built with Go by <a href="https://github.com/flaticols">@flaticols</a></div>
+    <div>
+      <a href="https://github.com/flaticols/gorefactor">Source</a>
+      &nbsp;·&nbsp;
+      <a href="https://github.com/flaticols/gorefactor/releases">Releases</a>
+      &nbsp;·&nbsp;
+      <a href="https://github.com/flaticols/gorefactor/issues">Issues</a>
+    </div>
   </div>
 </footer>
 
