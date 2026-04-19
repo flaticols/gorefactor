@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gorefact — Go call-graph explorer with dependency rule checks</title>
+<meta name="description" content="gorefact is a Go call-graph and dependency explorer. Show reference trees for any package or symbol and enforce architectural rules via TOML.">
+<style>
+  :root {
+    --bg: #0f1115;
+    --fg: #e6e8eb;
+    --muted: #9aa3af;
+    --accent: #7cc4ff;
+    --accent-2: #b7f3a6;
+    --card: #161a21;
+    --border: #232833;
+    --code-bg: #0a0c10;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre, kbd {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+                 "Liberation Mono", monospace;
+    font-size: 0.92em;
+  }
+  .container { max-width: 860px; margin: 0 auto; padding: 0 24px; }
+
+  header {
+    padding: 72px 0 40px;
+    border-bottom: 1px solid var(--border);
+  }
+  header .eyebrow {
+    color: var(--muted);
+    font-size: 0.85em;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  h1 {
+    font-size: 2.6em;
+    margin: 0 0 12px;
+    letter-spacing: -0.02em;
+  }
+  h1 .mono { color: var(--accent-2); font-family: ui-monospace, Menlo, monospace; }
+  .tagline {
+    color: var(--muted);
+    font-size: 1.15em;
+    margin: 0 0 28px;
+    max-width: 640px;
+  }
+  .cta {
+    display: inline-flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .btn {
+    display: inline-block;
+    padding: 9px 16px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--card);
+    color: var(--fg);
+    font-size: 0.95em;
+  }
+  .btn.primary {
+    background: var(--accent);
+    color: #0a0c10;
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+  .btn:hover { text-decoration: none; border-color: var(--accent); }
+
+  section { padding: 48px 0; border-bottom: 1px solid var(--border); }
+  section:last-of-type { border-bottom: 0; }
+  h2 {
+    font-size: 1.5em;
+    margin: 0 0 20px;
+    letter-spacing: -0.01em;
+  }
+  h3 {
+    font-size: 1.05em;
+    margin: 24px 0 10px;
+    color: var(--fg);
+  }
+
+  ul.features {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 10px;
+  }
+  ul.features li {
+    padding: 14px 16px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  ul.features code {
+    color: var(--accent-2);
+    background: transparent;
+    padding: 0;
+  }
+
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 0 0 16px;
+  }
+  p code, li code {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+  }
+
+  footer {
+    color: var(--muted);
+    font-size: 0.9em;
+    padding: 32px 0 48px;
+    text-align: center;
+  }
+  footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="container">
+    <div class="eyebrow">Go · Static analysis · TOML rules</div>
+    <h1><span class="mono">gorefact</span></h1>
+    <p class="tagline">
+      A Go call-graph and dependency explorer. Show reference trees for any
+      package or symbol, and enforce architectural rules defined in a TOML
+      file.
+    </p>
+    <div class="cta">
+      <a class="btn primary" href="#install">Install</a>
+      <a class="btn" href="https://github.com/flaticols/gorefactor">GitHub</a>
+      <a class="btn" href="https://github.com/flaticols/gorefactor/releases">Releases</a>
+    </div>
+  </div>
+</header>
+
+<section id="what">
+  <div class="container">
+    <h2>What it does</h2>
+    <ul class="features">
+      <li><code>gorefact inspect</code> — interactive TUI or structured output showing full reference trees for any package or symbol.</li>
+      <li><code>gorefact check</code> — batch dependency violation check against TOML <code>[[deny]]</code> rules.</li>
+      <li><code>gorefact serve</code> — long-lived JSON-RPC server consumed by the Neovim plugin.</li>
+      <li>Output formats: <code>text</code>, <code>json</code>, <code>md</code>, <code>qf</code> (quickfix).</li>
+      <li>Optional <code>--filter-pkg</code> scoping for large repositories.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="install">
+  <div class="container">
+    <h2>Install</h2>
+
+    <h3>Homebrew</h3>
+<pre><code>brew tap flaticols/apps
+brew install flaticols/apps/gorefact</code></pre>
+
+    <h3>Go</h3>
+    <p>Install globally with <code>go install</code>:</p>
+<pre><code>go install go.flaticols.dev/gorefactor/cmd/gorefact@latest</code></pre>
+    <p>Or pin it per-module as a Go tool dependency (Go 1.24+):</p>
+<pre><code>go get -tool go.flaticols.dev/gorefactor/cmd/gorefact@latest
+go tool gorefact inspect ./...</code></pre>
+
+    <h3>Nix</h3>
+<pre><code>nix profile install github:flaticols/gorefactor</code></pre>
+    <p>Or add it as a flake input:</p>
+<pre><code>inputs.gorefactor.url = "github:flaticols/gorefactor";</code></pre>
+
+    <h3>Release archives</h3>
+    <p>Tagged releases publish <code>tar.gz</code> archives for macOS (<code>amd64</code>, <code>arm64</code>) on the <a href="https://github.com/flaticols/gorefactor/releases">releases page</a>.</p>
+  </div>
+</section>
+
+<section id="next">
+  <div class="container">
+    <h2>Next steps</h2>
+    <ul class="features">
+      <li><a href="https://github.com/flaticols/gorefactor#inspect">Inspect a package or symbol</a></li>
+      <li><a href="https://github.com/flaticols/gorefactor#check">Check dependency rules</a></li>
+      <li><a href="https://github.com/flaticols/gorefactor#rules">Write rule files</a></li>
+      <li><a href="https://github.com/flaticols/gorefactor#neovim-plugin">Neovim plugin</a></li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    MIT licensed · <a href="https://github.com/flaticols/gorefactor">github.com/flaticols/gorefactor</a>
+  </div>
+</footer>
+
+</body>
+</html>
