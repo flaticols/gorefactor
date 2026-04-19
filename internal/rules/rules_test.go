@@ -120,3 +120,21 @@ func TestMatches(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckPackageImport(t *testing.T) {
+	rs := []Rule{
+		{From: "handler", To: "tasks", Reason: "test deny"},
+	}
+	got := CheckPackageImport("example.com/app/handler", "example.com/app/tasks", rs)
+	if got == nil {
+		t.Fatal("expected rule match, got nil")
+	}
+	if got.Reason != "test deny" {
+		t.Fatalf("got reason %q, want %q", got.Reason, "test deny")
+	}
+
+	got2 := CheckPackageImport("example.com/app/service", "example.com/app/tasks", rs)
+	if got2 != nil {
+		t.Fatalf("expected no match for service→tasks, got %v", got2)
+	}
+}

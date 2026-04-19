@@ -13,7 +13,7 @@ import (
 	"strings"
 	"syscall"
 
-	"go.flaticols.dev/gorefactor/internal/graph"
+	"go.flaticols.dev/gorefactor/internal/loader"
 	"go.flaticols.dev/gorefactor/internal/rpc"
 	"go.flaticols.dev/gorefactor/internal/rules"
 )
@@ -26,11 +26,16 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
+		if isTTY() {
+			return runInspect(nil, stdout, stderr)
+		}
 		printRootHelp(stderr)
 		return 2
 	}
 
 	switch args[0] {
+	case "inspect":
+		return runInspect(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		return runHelp(args[1:], stdout, stderr)
 	case "check":
@@ -42,6 +47,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "validate-rules":
 		return runValidateRules(args[1:], stdout, stderr)
 	default:
+		// If the first arg looks like a package path or dir, treat as inspect target.
+		if looksLikeTarget(args[0]) {
+			return runInspect(args, stdout, stderr)
+		}
 		fmt.Fprintf(stderr, "unknown subcommand %q\n\n", args[0])
 		printRootHelp(stderr)
 		return 2
@@ -75,17 +84,18 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s...\n", title(stage))
 	}
 
-	g, err := graph.Build(graph.BuildConfig{
+	res, err := loader.Load(loader.Config{
 		Dir:       *dir,
 		Tests:     *tests,
 		FilterPkg: *filterPkg,
 		Patterns:  fs.Args(),
 		Progress:  progress,
-	})
+	}, loader.DepthFull)
 	if err != nil {
 		fmt.Fprintf(stderr, "build failed: %v\n", err)
 		return 1
 	}
+	g := res.Graph
 
 	ruleSet, err := rules.Parse(resolvedRulesPath)
 	if err != nil {
@@ -148,17 +158,18 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		_ = writeNotification(stdout, "gorefact.progress", map[string]string{"stage": title(stage)})
 	}
 
-	g, err := graph.Build(graph.BuildConfig{
+	res, err := loader.Load(loader.Config{
 		Dir:       *dir,
 		Tests:     *tests,
 		FilterPkg: *filterPkg,
 		Patterns:  fs.Args(),
 		Progress:  progress,
-	})
+	}, loader.DepthFull)
 	if err != nil {
 		fmt.Fprintf(stderr, "build failed: %v\n", err)
 		return 1
 	}
+	g := res.Graph
 
 	var ruleSet []rules.Rule
 	if strings.TrimSpace(resolvedRulesPath) != "" {
@@ -238,6 +249,9 @@ func runHelp(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	switch strings.TrimSpace(args[0]) {
+	case "inspect":
+		printInspectHelp(stdout)
+		return 0
 	case "check":
 		printCheckHelp(stdout)
 		return 0
@@ -264,6 +278,7 @@ func printRootHelp(w io.Writer) {
 	fmt.Fprintln(w, "  gorefact <command> [flags] [packages...]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Commands:")
+	fmt.Fprintln(w, "  inspect         show what imports or references a package/symbol (TUI or text)")
 	fmt.Fprintln(w, "  check           build the graph and report rule violations")
 	fmt.Fprintln(w, "  serve           start the JSON-RPC server for the Neovim plugin")
 	fmt.Fprintln(w, "  validate-rules  parse and validate a rules file without loading packages")
@@ -349,9 +364,19 @@ func title(stage string) string {
 		return "Building call graph"
 	case "done":
 		return "Done"
+	case "loading package graph":
+		return "Loading package graph"
+	case "walking references":
+		return "Walking references"
 	default:
 		return filepath.Clean(stage)
 	}
+}
+
+// looksLikeTarget returns true when s looks like a package path or dir rather
+// than a subcommand name: starts with "." or "/", or contains a "/".
+func looksLikeTarget(s string) bool {
+	return strings.HasPrefix(s, ".") || strings.HasPrefix(s, "/") || strings.Contains(s, "/")
 }
 
 func resolvePath(baseDir, path string) string {

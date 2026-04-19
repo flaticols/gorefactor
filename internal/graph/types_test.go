@@ -52,3 +52,56 @@ func TestGraphIndexesAndLookups(t *testing.T) {
 		t.Fatalf("FuncAtPos fallback = %#v, %v", fn, ok)
 	}
 }
+
+func TestEdgeKindOnGraph(t *testing.T) {
+	g := &Graph{
+		Funcs: []Func{
+			{ID: 1, Name: "Caller", Package: "a", File: "a/a.go", Line: 1},
+			{ID: 2, Name: "Callee", Package: "b", File: "b/b.go", Line: 1},
+		},
+		Edges: []Edge{
+			{Caller: 1, Callee: 2, Kind: EdgeCall, File: "a/a.go", Line: 5},
+		},
+	}
+	g.Index()
+	callers := g.CallersOf(g.Funcs[1])
+	if len(callers) != 1 {
+		t.Fatalf("CallersOf len = %d, want 1", len(callers))
+	}
+}
+
+func TestSymbolIndexing(t *testing.T) {
+	g := &Graph{
+		Symbols: []Symbol{
+			{ID: 10, Kind: "var", Name: "ErrNotFound", Package: "tasks", File: "tasks/errors.go", Line: 5, Exported: true},
+			{ID: 11, Kind: "const", Name: "MaxRetries", Package: "tasks", File: "tasks/config.go", Line: 3, Exported: true},
+		},
+	}
+	g.Index()
+
+	sym, ok := g.SymbolByID(10)
+	if !ok || sym.Name != "ErrNotFound" {
+		t.Fatalf("SymbolByID(10) = %v, %v", sym, ok)
+	}
+
+	syms := g.SymbolsInPackage("tasks")
+	if len(syms) != 2 {
+		t.Fatalf("SymbolsInPackage len = %d, want 2", len(syms))
+	}
+}
+
+func TestEdgeSamePkgFlag(t *testing.T) {
+	g := &Graph{
+		Funcs: []Func{
+			{ID: 1, Name: "A", Package: "pkg", File: "pkg/a.go", Line: 1},
+			{ID: 2, Name: "B", Package: "pkg", File: "pkg/b.go", Line: 1},
+		},
+		Edges: []Edge{
+			{Caller: 1, Callee: 2, Kind: EdgeCall, SamePkg: true, File: "pkg/a.go", Line: 5},
+		},
+	}
+	g.Index()
+	if !g.Edges[0].SamePkg {
+		t.Fatal("expected SamePkg=true")
+	}
+}

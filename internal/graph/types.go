@@ -5,6 +5,27 @@ import (
 	"strings"
 )
 
+// EdgeKind classifies the nature of a reference edge.
+type EdgeKind string
+
+const (
+	EdgeCall    EdgeKind = "call"
+	EdgeRead    EdgeKind = "read"
+	EdgeWrite   EdgeKind = "write"
+	EdgeTypeRef EdgeKind = "typeref"
+)
+
+// Symbol represents a non-function declaration: var, const, or type.
+type Symbol struct {
+	ID       int
+	Kind     string // "var" | "const" | "type"
+	Name     string
+	Package  string
+	File     string
+	Line     int
+	Exported bool
+}
+
 // Func describes a function or method in the call graph.
 type Func struct {
 	ID        int
@@ -21,12 +42,15 @@ type Func struct {
 
 // Edge describes a call site from one function to another.
 type Edge struct {
-	Caller  int
-	Callee  int
-	File    string
-	Line    int
-	Col     int
-	Dynamic bool
+	Caller    int
+	Callee    int
+	Kind      EdgeKind // call, read, write, typeref; empty treated as call
+	SamePkg   bool     // true when caller and callee share the same package
+	CallerPkg string   // package path of the caller; populated by T2 WalkRefs
+	File      string
+	Line      int
+	Col       int
+	Dynamic   bool
 }
 
 // CallCount carries the number of calls between two functions plus the
@@ -39,14 +63,17 @@ type CallCount struct {
 // Graph stores discovered functions and call edges together with indexes for
 // common lookups used by the CLI and RPC server.
 type Graph struct {
-	Funcs []Func
-	Edges []Edge
+	Funcs   []Func
+	Edges   []Edge
+	Symbols []Symbol
 
 	byID         map[int]int
 	byName       map[string][]int
 	byPkgRecv    map[string][]int
 	callersIndex map[int][]int
 	calleesIndex map[int][]int
+	bySymbolID   map[int]int
+	bySymbolPkg  map[string][]int
 }
 
 // Index builds all in-memory indexes. It is safe to call multiple times.
@@ -70,6 +97,18 @@ func (g *Graph) Index() {
 		e := g.Edges[i]
 		g.callersIndex[e.Callee] = append(g.callersIndex[e.Callee], e.Caller)
 		g.calleesIndex[e.Caller] = append(g.calleesIndex[e.Caller], e.Callee)
+	}
+
+	g.bySymbolID = make(map[int]int, len(g.Symbols))
+	g.bySymbolPkg = make(map[string][]int)
+	for i := range g.Symbols {
+		s := g.Symbols[i]
+		g.bySymbolID[s.ID] = i
+		g.bySymbolPkg[s.Package] = append(g.bySymbolPkg[s.Package], s.ID)
+	}
+	for pkg, ids := range g.bySymbolPkg {
+		sort.Ints(ids)
+		g.bySymbolPkg[pkg] = uniqueInts(ids)
 	}
 
 	// Keep lookups stable for tests and downstream consumers.
@@ -101,6 +140,33 @@ func (g *Graph) FuncByID(id int) (Func, bool) {
 		return Func{}, false
 	}
 	return g.Funcs[i], true
+}
+
+// SymbolByID returns the symbol for the given identifier.
+func (g *Graph) SymbolByID(id int) (Symbol, bool) {
+	if g.bySymbolID == nil {
+		g.Index()
+	}
+	i, ok := g.bySymbolID[id]
+	if !ok {
+		return Symbol{}, false
+	}
+	return g.Symbols[i], true
+}
+
+// SymbolsInPackage returns all symbols declared in the given package.
+func (g *Graph) SymbolsInPackage(pkg string) []Symbol {
+	if g.bySymbolPkg == nil {
+		g.Index()
+	}
+	ids := g.bySymbolPkg[pkg]
+	out := make([]Symbol, 0, len(ids))
+	for _, id := range ids {
+		if s, ok := g.SymbolByID(id); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // CallersOf returns all callers for the callee function.

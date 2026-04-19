@@ -46,6 +46,17 @@ func CheckEdge(g *graph.Graph, edge graph.Edge, rules []Rule) *Rule {
 	return rule
 }
 
+// CheckPackageImport returns the first matching deny rule for a package-level
+// import from fromPkg to toPkg. Uses the same matching logic as edge checks.
+func CheckPackageImport(fromPkg, toPkg string, rs []Rule) *Rule {
+	for i := range rs {
+		if matches(fromPkg, rs[i].From) && matches(toPkg, rs[i].To) {
+			return &rs[i]
+		}
+	}
+	return nil
+}
+
 func checkEdge(g *graph.Graph, edge graph.Edge, rules []Rule) (*Rule, graph.Func, graph.Func, bool) {
 	caller, ok := g.FuncByID(edge.Caller)
 	if !ok {
