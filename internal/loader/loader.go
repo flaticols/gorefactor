@@ -42,6 +42,11 @@ func cleanPath(base, file string) string {
 	if base == "" {
 		return filepath.ToSlash(file)
 	}
+	if !filepath.IsAbs(base) {
+		if abs, err := filepath.Abs(base); err == nil {
+			base = abs
+		}
+	}
 	if rel, err := filepath.Rel(base, file); err == nil {
 		return filepath.ToSlash(rel)
 	}

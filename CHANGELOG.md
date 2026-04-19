@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.15] - 2026-04-19
+
+### Added
+- `m` key toggles module-only search: exclude third-party packages and only show entries under the main module path
+- Auto-open struct/interface member view when a single type symbol loads (no `Enter` needed); also works for interfaces
+
+### Changed
+- Reference file paths are now module-relative (was absolute): `-dir` default of `.` is resolved to cwd before relativizing
+- Detail panel shows the fully-qualified `module/pkg.Name` and wraps long lines across multiple rows (via lipgloss `Width`)
+
 ## [0.0.14] - 2026-04-19
 
 ### Added

@@ -53,9 +53,17 @@ func isNoisePkg(p string) bool {
 }
 
 // filterResults scores and ranks packages and symbols against query, returning up to maxResults.
-func filterResults(query string, pkgs []string, syms []symbolEntry) []searchResult {
+// If moduleOnly is true, only packages/symbols under modulePrefix are included.
+func filterResults(query string, pkgs []string, syms []symbolEntry, modulePrefix string, moduleOnly bool) []searchResult {
 	const maxResults = 15
 	q := strings.TrimSpace(query)
+
+	inModule := func(p string) bool {
+		if !moduleOnly || modulePrefix == "" {
+			return true
+		}
+		return p == modulePrefix || strings.HasPrefix(p, modulePrefix+"/")
+	}
 
 	type scored struct {
 		r     searchResult
@@ -65,7 +73,7 @@ func filterResults(query string, pkgs []string, syms []symbolEntry) []searchResu
 
 	if q == "" {
 		for i, p := range pkgs {
-			if isNoisePkg(p) {
+			if isNoisePkg(p) || !inModule(p) {
 				continue
 			}
 			if i >= maxResults {
@@ -75,7 +83,7 @@ func filterResults(query string, pkgs []string, syms []symbolEntry) []searchResu
 		}
 	} else {
 		for _, p := range pkgs {
-			if isNoisePkg(p) {
+			if isNoisePkg(p) || !inModule(p) {
 				continue
 			}
 			seg := p
@@ -91,6 +99,9 @@ func filterResults(query string, pkgs []string, syms []symbolEntry) []searchResu
 			}
 		}
 		for _, se := range syms {
+			if !inModule(se.sym.Package) {
+				continue
+			}
 			s := scoreMatch(q, se.sym.Name)
 			if s > 0 {
 				candidates = append(candidates, scored{

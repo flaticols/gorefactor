@@ -107,6 +107,7 @@ type Model struct {
 	searchSel     int
 
 	modulePrefix string // main module path — stripped from displayed package paths
+	moduleOnly   bool   // search shows only packages/symbols inside the main module
 
 	view          viewMode
 	structMembers []inspect.StructMember
@@ -205,7 +206,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.modulePrefix = msg.module
 		}
 		if m.inputMode {
-			m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols)
+			m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols, m.modulePrefix, m.moduleOnly)
 		}
 		return m, nil
 
@@ -219,7 +220,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case allSymbolsMsg:
 		m.allSymbols = []symbolEntry(msg)
 		if m.inputMode {
-			m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols)
+			m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols, m.modulePrefix, m.moduleOnly)
 		}
 		return m, nil
 
@@ -237,6 +238,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = buildSymbolList(m)
 		m = updateTree(m)
 		m.active = paneList
+		m.view = viewSymbols
+		m.structMembers = nil
+		// Auto-open struct/interface member view if the load resolved to a
+		// single type symbol (typical when user picks pkg.StructName from search).
+		if len(m.symbols) == 1 && m.symbols[0].sym.Kind == "type" {
+			sel := m.symbols[0].sym
+			m.view = viewStruct
+			m.structPkg = sel.Package
+			m.structName = sel.Name
+			m.structIdx = 0
+			return m, loadStructMembers(m.cfg, sel.Package, sel.Name)
+		}
 		return m, nil
 
 	case spinner.TickMsg:
@@ -299,7 +312,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			default:
 				var cmd tea.Cmd
 				m.input, cmd = m.input.Update(msg)
-				m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols)
+				m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols, m.modulePrefix, m.moduleOnly)
 				m.searchSel = 0
 				return m, cmd
 			}
@@ -338,7 +351,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "/":
 			m.inputMode = true
 			m.input.Focus()
-			m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols)
+			m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols, m.modulePrefix, m.moduleOnly)
 			m.searchSel = 0
 			return m, nil
 
@@ -397,6 +410,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.result != nil {
 				m.violOnly = !m.violOnly
 				m = updateTree(m)
+			}
+			return m, nil
+
+		case "m":
+			m.moduleOnly = !m.moduleOnly
+			if m.inputMode {
+				m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols, m.modulePrefix, m.moduleOnly)
 			}
 			return m, nil
 
@@ -709,25 +729,30 @@ func (m Model) renderDetailPanel() string {
 	sel := m.symbols[m.listIdx]
 	s := sel.sym
 
-	cols := []string{
-		fmt.Sprintf("  %s  %s  %s:%d  refs:%d",
-			styleActive.Render(m.shortPkg(s.Package)+"."+s.Name),
-			styleDim.Render("("+s.Kind+")"),
-			s.File, s.Line,
-			sel.refCount,
-		),
-	}
+	wrap := lipgloss.NewStyle().Width(w - 2)
+	nameLine := wrap.Render(fmt.Sprintf("  %s %s",
+		styleActive.Render(s.Package+"."+s.Name),
+		styleDim.Render("("+s.Kind+")"),
+	))
+	locLine := wrap.Render(fmt.Sprintf("  %s  refs:%d",
+		styleDim.Render(fmt.Sprintf("%s:%d", s.File, s.Line)),
+		sel.refCount,
+	))
+
+	cols := []string{nameLine, locLine}
 
 	if len(m.result.Violations) > 0 {
-		violLine := styleViolation.Render(fmt.Sprintf("  violations (%d): ", len(m.result.Violations)))
+		var b strings.Builder
+		b.WriteString(styleViolation.Render(fmt.Sprintf("  violations (%d): ", len(m.result.Violations))))
 		for i, v := range m.result.Violations {
 			if i >= 3 {
-				violLine += styleDim.Render(fmt.Sprintf("(+%d more)", len(m.result.Violations)-3))
+				b.WriteString(styleDim.Render(fmt.Sprintf("(+%d more)", len(m.result.Violations)-3)))
 				break
 			}
-			violLine += styleViolation.Render(m.shortPkg(v.FromPkg)) + styleDim.Render(" "+v.Rule.Reason+"  ")
+			b.WriteString(styleViolation.Render(v.FromPkg))
+			b.WriteString(styleDim.Render(" " + v.Rule.Reason + "  "))
 		}
-		cols = append(cols, violLine)
+		cols = append(cols, wrap.Render(b.String()))
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, append([]string{sep}, cols...)...)
@@ -752,13 +777,17 @@ func (m Model) renderHelpBar() string {
 	if m.showDetail {
 		detailStr = "on"
 	}
+	modStr := "off"
+	if m.moduleOnly {
+		modStr = "on"
+	}
 	parts := []string{
 		"[/] search",
 		"[hjkl] navigate",
-		"[enter] struct",
 		"[esc] back",
 		"[g] group=" + groupStr,
 		"[f] violations=" + violStr,
+		"[m] module-only=" + modStr,
 		"[i] detail=" + detailStr,
 		"[e] open",
 		"[q] quit",

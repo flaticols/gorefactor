@@ -2,6 +2,7 @@ package inspect
 
 import (
 	"go/types"
+	"path/filepath"
 	"strings"
 
 	"go.flaticols.dev/gorefactor/internal/graph"
@@ -206,11 +207,19 @@ func LoadStructMembers(cfg Config, pkgPath, typeName string) ([]StructMember, er
 }
 
 func relPath(base, file string) string {
-	if base == "" || file == "" {
+	if file == "" {
 		return file
 	}
-	if strings.HasPrefix(file, base+"/") {
-		return file[len(base)+1:]
+	if base == "" {
+		return file
+	}
+	if !filepath.IsAbs(base) {
+		if abs, err := filepath.Abs(base); err == nil {
+			base = abs
+		}
+	}
+	if rel, err := filepath.Rel(base, file); err == nil {
+		return filepath.ToSlash(rel)
 	}
 	return file
 }
