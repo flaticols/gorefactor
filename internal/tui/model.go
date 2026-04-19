@@ -29,6 +29,8 @@ const (
 	paneTree
 )
 
+const detailPanelHeight = 9
+
 // symbolEntry is one row in the symbol list pane.
 type symbolEntry struct {
 	sym      graph.Symbol
@@ -57,8 +59,9 @@ type Model struct {
 	treeLines []string
 	treeIdx   int
 
-	group    GroupMode
-	violOnly bool
+	group      GroupMode
+	violOnly   bool
+	showDetail bool // bottom detail panel toggled by i
 
 	active        pane
 	width, height int
@@ -83,7 +86,7 @@ func New(initialTarget string, cfg inspect.Config) Model {
 		spinner:   sp,
 		active:    paneList,
 		loading:   hasTarget,
-		inputMode: hasTarget, // start in search mode when target pre-filled
+		inputMode: hasTarget,
 	}
 	if hasTarget {
 		m.input.Focus()
@@ -187,6 +190,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "/":
 			m.inputMode = true
 			m.input.Focus()
+			return m, nil
+
+		case "i":
+			m.showDetail = !m.showDetail
 			return m, nil
 
 		case "tab", "l":
@@ -301,26 +308,34 @@ func (m Model) View() string {
 		return lipgloss.JoinVertical(lipgloss.Left, searchBar, "", loadLine, "", styleHelp.Render("[ctrl+q] quit"))
 	}
 
-	contentH := m.height - 3
+	help := m.renderHelpBar()
+
+	// Reserve rows: 1 search + 1 help + detailPanel (when shown).
+	detailH := 0
+	if m.showDetail {
+		detailH = detailPanelHeight
+	}
+	contentH := m.height - 2 - detailH
 	if contentH < 2 {
 		contentH = 2
 	}
 
 	leftW := m.width / 3
-	midW := m.width / 3
-	rightW := m.width - leftW - midW
+	rightW := m.width - leftW
 	if rightW < 8 {
 		rightW = 8
 	}
 
 	left := m.renderList(leftW, contentH)
-	mid := m.renderTree(midW, contentH)
-	right := m.renderDetail(rightW, contentH)
+	right := m.renderTree(rightW, contentH)
+	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
-	body := lipgloss.JoinHorizontal(lipgloss.Top, left, mid, right)
-	help := m.renderHelpBar()
+	parts := []string{searchBar, body, help}
+	if m.showDetail {
+		parts = append(parts[:2], append([]string{m.renderDetailPanel()}, parts[2:]...)...)
+	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, searchBar, body, help)
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 func (m Model) renderSearch() string {
@@ -404,38 +419,39 @@ func (m Model) renderTree(w, h int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) renderDetail(w, h int) string {
-	titleStr := styleTitle.Render("Detail")
-	lines := make([]string, 0, h)
-	lines = append(lines, padRight(titleStr, w))
+func (m Model) renderDetailPanel() string {
+	w := m.width
+	sep := styleTitle.Render(strings.Repeat("─", w))
 
-	if m.result != nil && len(m.symbols) > 0 {
-		sel := m.symbols[m.listIdx]
-		s := sel.sym
-		lines = append(lines,
-			truncate(fmt.Sprintf("name:  %s", s.Name), w-1),
-			truncate(fmt.Sprintf("kind:  %s", s.Kind), w-1),
-			truncate(fmt.Sprintf("pkg:   %s", s.Package), w-1),
-			truncate(fmt.Sprintf("file:  %s:%d", s.File, s.Line), w-1),
-			truncate(fmt.Sprintf("refs:  %d", sel.refCount), w-1),
-			"",
-		)
-		if len(m.result.Violations) > 0 {
-			lines = append(lines, styleViolation.Render(fmt.Sprintf("violations (%d):", len(m.result.Violations))))
-			for _, v := range m.result.Violations {
-				if len(lines) >= h-1 {
-					break
-				}
-				lines = append(lines, styleViolation.Render(truncate("  "+v.FromPkg, w-1)))
-				lines = append(lines, styleDim.Render(truncate("  "+v.Rule.Reason, w-1)))
+	if m.result == nil || len(m.symbols) == 0 {
+		return lipgloss.JoinVertical(lipgloss.Left, sep, styleHelp.Render("  no symbol selected"))
+	}
+
+	sel := m.symbols[m.listIdx]
+	s := sel.sym
+
+	cols := []string{
+		fmt.Sprintf("  %s  %s  %s:%d  refs:%d",
+			styleActive.Render(s.Package+"."+s.Name),
+			styleDim.Render("("+s.Kind+")"),
+			s.File, s.Line,
+			sel.refCount,
+		),
+	}
+
+	if len(m.result.Violations) > 0 {
+		violLine := styleViolation.Render(fmt.Sprintf("  violations (%d): ", len(m.result.Violations)))
+		for i, v := range m.result.Violations {
+			if i >= 3 {
+				violLine += styleDim.Render(fmt.Sprintf("(+%d more)", len(m.result.Violations)-3))
+				break
 			}
+			violLine += styleViolation.Render(v.FromPkg) + styleDim.Render(" "+v.Rule.Reason+"  ")
 		}
+		cols = append(cols, violLine)
 	}
 
-	for len(lines) < h {
-		lines = append(lines, strings.Repeat(" ", w))
-	}
-	return strings.Join(lines, "\n")
+	return lipgloss.JoinVertical(lipgloss.Left, append([]string{sep}, cols...)...)
 }
 
 func (m Model) renderHelpBar() string {
@@ -453,11 +469,16 @@ func (m Model) renderHelpBar() string {
 	case GroupFunc:
 		groupStr = "func"
 	}
+	detailStr := "off"
+	if m.showDetail {
+		detailStr = "on"
+	}
 	parts := []string{
 		"[/] search",
 		"[hjkl] navigate",
 		"[g] group=" + groupStr,
 		"[f] violations=" + violStr,
+		"[i] detail=" + detailStr,
 		"[q] quit",
 	}
 	return styleHelp.Render(strings.Join(parts, "  "))
