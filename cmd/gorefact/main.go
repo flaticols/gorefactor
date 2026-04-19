@@ -13,7 +13,7 @@ import (
 	"strings"
 	"syscall"
 
-	"go.flaticols.dev/gorefactor/internal/graph"
+	"go.flaticols.dev/gorefactor/internal/loader"
 	"go.flaticols.dev/gorefactor/internal/rpc"
 	"go.flaticols.dev/gorefactor/internal/rules"
 )
@@ -75,17 +75,18 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s...\n", title(stage))
 	}
 
-	g, err := graph.Build(graph.BuildConfig{
+	res, err := loader.Load(loader.Config{
 		Dir:       *dir,
 		Tests:     *tests,
 		FilterPkg: *filterPkg,
 		Patterns:  fs.Args(),
 		Progress:  progress,
-	})
+	}, loader.DepthFull)
 	if err != nil {
 		fmt.Fprintf(stderr, "build failed: %v\n", err)
 		return 1
 	}
+	g := res.Graph
 
 	ruleSet, err := rules.Parse(resolvedRulesPath)
 	if err != nil {
@@ -148,17 +149,18 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		_ = writeNotification(stdout, "gorefact.progress", map[string]string{"stage": title(stage)})
 	}
 
-	g, err := graph.Build(graph.BuildConfig{
+	res, err := loader.Load(loader.Config{
 		Dir:       *dir,
 		Tests:     *tests,
 		FilterPkg: *filterPkg,
 		Patterns:  fs.Args(),
 		Progress:  progress,
-	})
+	}, loader.DepthFull)
 	if err != nil {
 		fmt.Fprintf(stderr, "build failed: %v\n", err)
 		return 1
 	}
+	g := res.Graph
 
 	var ruleSet []rules.Rule
 	if strings.TrimSpace(resolvedRulesPath) != "" {
