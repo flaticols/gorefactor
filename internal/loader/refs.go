@@ -108,13 +108,14 @@ func WalkRefs(targetPkg string, importerPaths []string, cfg Config, startID int)
 			callerFuncID := 0
 
 			result.Edges = append(result.Edges, graph.Edge{
-				Caller:  callerFuncID,
-				Callee:  sym.ID,
-				Kind:    classifyRef(obj),
-				SamePkg: samePkg,
-				File:    cleanPath(cfg.Dir, pos.Filename),
-				Line:    pos.Line,
-				Col:     pos.Column,
+				Caller:    callerFuncID,
+				Callee:    sym.ID,
+				Kind:      classifyRef(obj),
+				SamePkg:   samePkg,
+				CallerPkg: ipkg.PkgPath,
+				File:      cleanPath(cfg.Dir, pos.Filename),
+				Line:      pos.Line,
+				Col:       pos.Column,
 			})
 		}
 	}

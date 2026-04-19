@@ -42,14 +42,15 @@ type Func struct {
 
 // Edge describes a call site from one function to another.
 type Edge struct {
-	Caller  int
-	Callee  int
-	Kind    EdgeKind // call, read, write, typeref; empty treated as call
-	SamePkg bool     // true when caller and callee share the same package
-	File    string
-	Line    int
-	Col     int
-	Dynamic bool
+	Caller    int
+	Callee    int
+	Kind      EdgeKind // call, read, write, typeref; empty treated as call
+	SamePkg   bool     // true when caller and callee share the same package
+	CallerPkg string   // package path of the caller; populated by T2 WalkRefs
+	File      string
+	Line      int
+	Col       int
+	Dynamic   bool
 }
 
 // CallCount carries the number of calls between two functions plus the
