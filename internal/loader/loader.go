@@ -1,3 +1,4 @@
+// Package loader builds the call graph and package dependency graph.
 package loader
 
 import (

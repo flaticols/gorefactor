@@ -1,0 +1,16 @@
+name: Ownership
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  ownership:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package Ownership
+        uses: flaticols/ownership-guard@v5.0.0
