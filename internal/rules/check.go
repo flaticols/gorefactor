@@ -1,3 +1,4 @@
+// Package rules provides rule checking and validation utilities.
 package rules
 
 import (

@@ -1,0 +1,39 @@
+team: core
+@flaticols/core
+
+=ownership:
+internal/**
+cmd/**
+!internal/tui/**
+!internal/treeview/**
+
+=template:
+<!-- ownership-bot: core -->
+> [!IMPORTANT]
+> `{pkg}` is part of the analysis engine owned by **{team}**. {author}, please coordinate with {members} — changes here affect the core refactoring logic.
+
+team: tui
+@flaticols/core
+
+=ownership:
+internal/tui/**
+internal/treeview/**
+
+=template:
+<!-- ownership-bot: tui -->
+> [!NOTE]
+> `{pkg}` is owned by the **{team}** team. {author}, loop in {members} — UI changes should be reviewed for keyboard, rendering, and accessibility consistency.
+
+team: infra
+@flaticols/core
+
+=ownership:
+nix/**
+flake.nix
+flake.lock
+.goreleaser.yaml
+
+=template:
+<!-- ownership-bot: infra -->
+> [!WARNING]
+> `{pkg}` is owned by **{team}**. {author}, please align with {members} before merging — nix changes affect the binary packaging and release pipeline.

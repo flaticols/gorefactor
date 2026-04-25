@@ -1,5 +1,5 @@
 # This file is auto-updated by GoReleaser on each release.
-# Do not edit manually — changes will be overwritten.
+# Do not edit manually — changes will be overwritten on next release.
 { lib, stdenvNoCC, fetchurl }:
 let
   version = "0.0.17";
