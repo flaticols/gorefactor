@@ -48,7 +48,7 @@ go tool gorefact ./...
 
 ### Release archives
 
-Tagged releases publish `tar.gz` archives for macOS (`amd64`, `arm64`) on the [releases page](https://github.com/flaticols/gorefactor/releases).
+Tagged releases publish `tar.gz` archives for macOS (`x86_64`, `arm64`) on the [releases page](https://github.com/flaticols/gorefactor/releases).
 
 ---
 
