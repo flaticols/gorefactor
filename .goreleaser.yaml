@@ -42,7 +42,7 @@ brews:
       email: gh@flaticols.dev
     directory: Formula
     homepage: "https://github.com/flaticols/gorefactor"
-    description: "Go call-graph explorer with dependency rule checks and a Neovim UI"
+    description: "Package-centric explorer for Go import and reference graphs"
     commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
     license: "MIT"
     repository:

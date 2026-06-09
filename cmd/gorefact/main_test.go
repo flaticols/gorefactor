@@ -9,155 +9,6 @@ import (
 	"testing"
 )
 
-func TestRunCheck(t *testing.T) {
-	dir := t.TempDir()
-
-	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.26.2\n")
-	writeFile(t, filepath.Join(dir, "tasks", "task.go"), "package tasks\n\nimport \"example.com/test/adapters\"\n\nfunc Run() {\n\tadapters.Do()\n}\n")
-	writeFile(t, filepath.Join(dir, "adapters", "adapters.go"), "package adapters\n\nfunc Do() {}\n")
-	writeFile(t, filepath.Join(dir, "rules.toml"), "[[deny]]\nfrom = \"tasks\"\nto = \"adapters\"\nreason = \"tasks must not depend on adapters\"\n")
-
-	var stdout, stderr bytes.Buffer
-	exitCode := run([]string{
-		"check",
-		"--rules", filepath.Join(dir, "rules.toml"),
-		"--format", "text",
-		"--dir", dir,
-		"./...",
-	}, &stdout, &stderr)
-
-	if exitCode != 1 {
-		t.Fatalf("run() exitCode = %d, want 1", exitCode)
-	}
-	if !strings.Contains(stdout.String(), "VIOLATION tasks -> adapters") {
-		t.Fatalf("stdout missing violation report: %s", stdout.String())
-	}
-	if !strings.Contains(stderr.String(), "Found 1 violations across 1 rules") {
-		t.Fatalf("stderr missing summary: %s", stderr.String())
-	}
-}
-
-func TestRunCheckUsesDefaultRulesFile(t *testing.T) {
-	dir := t.TempDir()
-
-	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.26.2\n")
-	writeFile(t, filepath.Join(dir, "tasks", "task.go"), "package tasks\n\nimport \"example.com/test/adapters\"\n\nfunc Run() {\n\tadapters.Do()\n}\n")
-	writeFile(t, filepath.Join(dir, "adapters", "adapters.go"), "package adapters\n\nfunc Do() {}\n")
-	writeFile(t, filepath.Join(dir, defaultRulesFile), "[[deny]]\nfrom = \"tasks\"\nto = \"adapters\"\nreason = \"tasks must not depend on adapters\"\n")
-
-	var stdout, stderr bytes.Buffer
-	exitCode := run([]string{
-		"check",
-		"--format", "text",
-		"--dir", dir,
-		"./...",
-	}, &stdout, &stderr)
-
-	if exitCode != 1 {
-		t.Fatalf("run() exitCode = %d, want 1", exitCode)
-	}
-	if !strings.Contains(stdout.String(), "VIOLATION tasks -> adapters") {
-		t.Fatalf("stdout missing violation report: %s", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "at tasks/task.go:6:13") {
-		t.Fatalf("stdout missing relative callsite: %s", stdout.String())
-	}
-}
-
-func TestRunCheckJSONAndMarkdown(t *testing.T) {
-	dir := t.TempDir()
-
-	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.26.2\n")
-	writeFile(t, filepath.Join(dir, "tasks", "task.go"), "package tasks\n\nimport \"example.com/test/adapters\"\n\nfunc Run() {\n\tadapters.Do()\n}\n")
-	writeFile(t, filepath.Join(dir, "adapters", "adapters.go"), "package adapters\n\nfunc Do() {}\n")
-	writeFile(t, filepath.Join(dir, defaultRulesFile), "[[deny]]\nfrom = \"tasks\"\nto = \"adapters\"\nreason = \"tasks must not depend on adapters\"\n")
-
-	cases := []struct {
-		format string
-		want   []string
-	}{
-		{
-			format: "json",
-			want: []string{
-				`"working_dir":`,
-				`"callsite":`,
-				`"module": "example.com/test"`,
-				`"file": "tasks/task.go"`,
-			},
-		},
-		{
-			format: "md",
-			want: []string{
-				"# Dependency Violations Report",
-				"| # | Callsite | Caller | Callee | Dynamic |",
-				"`tasks/task.go:6:13`",
-			},
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.format, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			exitCode := run([]string{
-				"check",
-				"--format", tc.format,
-				"--dir", dir,
-				"./...",
-			}, &stdout, &stderr)
-
-			if exitCode != 1 {
-				t.Fatalf("run() exitCode = %d, want 1, stderr=%s", exitCode, stderr.String())
-			}
-			for _, want := range tc.want {
-				if !strings.Contains(stdout.String(), want) {
-					t.Fatalf("stdout missing %q: %s", want, stdout.String())
-				}
-			}
-		})
-	}
-}
-
-func TestRunCheckWithFilterPkgScopesGraph(t *testing.T) {
-	dir := t.TempDir()
-
-	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.26.2\n")
-	writeFile(t, filepath.Join(dir, "tasks", "task.go"), "package tasks\n\nimport \"example.com/test/adapters\"\n\nfunc Run() {\n\tadapters.Do()\n}\n")
-	writeFile(t, filepath.Join(dir, "adapters", "adapters.go"), "package adapters\n\nfunc Do() {}\n")
-	writeFile(t, filepath.Join(dir, "rules.toml"), "[[deny]]\nfrom = \"tasks\"\nto = \"adapters\"\nreason = \"tasks must not depend on adapters\"\n")
-
-	var stdout, stderr bytes.Buffer
-	exitCode := run([]string{
-		"check",
-		"--rules", filepath.Join(dir, "rules.toml"),
-		"--format", "text",
-		"--dir", dir,
-		"--filter-pkg", "tasks",
-		"./...",
-	}, &stdout, &stderr)
-
-	if exitCode != 0 {
-		t.Fatalf("run() exitCode = %d, want 0", exitCode)
-	}
-	if !strings.Contains(stdout.String(), "No dependency violations found.") {
-		t.Fatalf("stdout = %q", stdout.String())
-	}
-}
-
-func TestRunValidateRules(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "rules.toml")
-	writeFile(t, path, "[[deny]]\nfrom = \"tasks\"\nto = \"adapters\"\nreason = \"tasks must not depend on adapters\"\n")
-
-	var stdout, stderr bytes.Buffer
-	exitCode := run([]string{"validate-rules", "--rules", path}, &stdout, &stderr)
-	if exitCode != 0 {
-		t.Fatalf("run() exitCode = %d, want 0, stderr=%s", exitCode, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "validated 1 rules") {
-		t.Fatalf("stdout = %q", stdout.String())
-	}
-}
-
 func TestRunVersion(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	exitCode := run([]string{"version"}, &stdout, &stderr)
@@ -178,72 +29,37 @@ func TestRunHelp(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "Commands:") || !strings.Contains(stdout.String(), "gorefact help check") {
-		t.Fatalf("stdout missing root help details: %s", stdout.String())
+	for _, want := range []string{"Commands:", "version", "--module-only"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %q: %s", want, stdout.String())
+		}
+	}
+	if strings.Contains(stdout.String(), "inspect") {
+		t.Fatalf("root help should no longer mention the inspect subcommand: %s", stdout.String())
 	}
 }
 
-func TestRunHelpCheck(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	exitCode := run([]string{"help", "check"}, &stdout, &stderr)
-	if exitCode != 0 {
-		t.Fatalf("run() exitCode = %d, want 0", exitCode)
+func TestRunHelp_UnknownTopic(t *testing.T) {
+	// Any unknown help topic could be a package target, so cobra resolves it
+	// to the root command and prints root help with exit 0.
+	var out, errOut strings.Builder
+	code := run([]string{"help", "bogus"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
 	}
-	if stderr.Len() != 0 {
-		t.Fatalf("stderr = %q, want empty", stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "gorefact check [flags] [packages...]") || !strings.Contains(stdout.String(), "Build the call graph") {
-		t.Fatalf("stdout missing check help details: %s", stdout.String())
-	}
-}
-
-func TestRunCheckHelpFlag(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	exitCode := run([]string{"check", "-h"}, &stdout, &stderr)
-	if exitCode != 0 {
-		t.Fatalf("run() exitCode = %d, want 0", exitCode)
-	}
-	if stdout.Len() != 0 {
-		t.Fatalf("stdout = %q, want empty", stdout.String())
-	}
-	if !strings.Contains(stderr.String(), "Usage:") || !strings.Contains(stderr.String(), "Flags:") || !strings.Contains(stderr.String(), "-format") {
-		t.Fatalf("stderr missing flag help: %s", stderr.String())
-	}
-}
-
-func TestRunUnknownSubcommand(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	exitCode := run([]string{"bogus"}, &stdout, &stderr)
-	if exitCode != 2 {
-		t.Fatalf("run() exitCode = %d, want 2", exitCode)
-	}
-	if stdout.Len() != 0 {
-		t.Fatalf("stdout = %q, want empty", stdout.String())
-	}
-	if !strings.Contains(stderr.String(), "unknown subcommand") {
-		t.Fatalf("stderr missing usage: %s", stderr.String())
+	if !strings.Contains(out.String(), "gorefact [dir] [target]") {
+		t.Errorf("help bogus should print root help: %s", out.String())
 	}
 }
 
 func TestRunInspect_HelpFlag(t *testing.T) {
 	var out, errOut strings.Builder
-	code := run([]string{"inspect", "-h"}, &out, &errOut)
+	code := run([]string{"-h"}, &out, &errOut)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr: %s", code, errOut.String())
 	}
-	if !strings.Contains(errOut.String(), "gorefact inspect") {
-		t.Errorf("help output missing usage line: %s", errOut.String())
-	}
-}
-
-func TestRunHelp_InspectTopic(t *testing.T) {
-	var out, errOut strings.Builder
-	code := run([]string{"help", "inspect"}, &out, &errOut)
-	if code != 0 {
-		t.Fatalf("exit code = %d, stderr: %s", code, errOut.String())
-	}
-	if !strings.Contains(out.String(), "gorefact inspect") {
-		t.Errorf("help inspect missing: %s", out.String())
+	if !strings.Contains(out.String(), "gorefact [dir] [target]") {
+		t.Errorf("help output missing usage line: %s", out.String())
 	}
 }
 
@@ -264,7 +80,6 @@ func Make() alpha.Widget { return alpha.Widget{} }
 
 	var out, errOut strings.Builder
 	code := run([]string{
-		"inspect",
 		"--format", "text",
 		"--dir", dir,
 		"example.com/testmod/alpha",
@@ -272,8 +87,179 @@ func Make() alpha.Widget { return alpha.Widget{} }
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr: %s", code, errOut.String())
 	}
-	if !strings.Contains(out.String(), "example.com/testmod/alpha") {
-		t.Errorf("output missing target package: %s", out.String())
+	for _, want := range []string{"example.com/testmod/alpha", "Public API:", "Importers:"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output missing %q: %s", want, out.String())
+		}
+	}
+}
+
+// TestRunInspect_FlagsAfterTarget guards the goal form `gorefact <pkg> --format json`,
+// where the flag follows the positional target.
+func TestRunInspect_FlagsAfterTarget(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "go.mod"), "module example.com/testmod\n\ngo 1.26.2\n")
+	mustWriteFile(t, filepath.Join(dir, "alpha", "alpha.go"), `package alpha
+
+type Widget struct{}
+`)
+	mustWriteFile(t, filepath.Join(dir, "beta", "beta.go"), `package beta
+
+import "example.com/testmod/alpha"
+
+func Make() alpha.Widget { return alpha.Widget{} }
+`)
+
+	var out, errOut strings.Builder
+	// Flag after the target, and a partial-path target ("testmod/alpha").
+	code := run([]string{
+		"--dir", dir,
+		"testmod/alpha",
+		"--format", "json",
+	}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr: %s", code, errOut.String())
+	}
+	s := strings.TrimSpace(out.String())
+	if !strings.HasPrefix(s, "{") {
+		t.Fatalf("expected JSON output when --format json follows the target, got:\n%s", s)
+	}
+	if !strings.Contains(s, "example.com/testmod/alpha") {
+		t.Errorf("partial-path target did not resolve to full package path: %s", s)
+	}
+}
+
+// TestRunInspect_DirAsFirstArg guards the form `gorefact <dir> <target>`, where
+// an explicit directory path is the first positional and the target follows.
+func TestRunInspect_DirAsFirstArg(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "go.mod"), "module example.com/testmod\n\ngo 1.26.2\n")
+	mustWriteFile(t, filepath.Join(dir, "alpha", "alpha.go"), "package alpha\n\ntype Widget struct{}\n")
+
+	var out, errOut strings.Builder
+	// Absolute dir path as first positional (starts with "/" -> treated as dir),
+	// target second, --format makes it the non-TTY report path.
+	code := run([]string{dir, "testmod/alpha", "--format", "json"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr: %s", code, errOut.String())
+	}
+	s := strings.TrimSpace(out.String())
+	if !strings.Contains(s, "example.com/testmod/alpha") {
+		t.Fatalf("dir-as-first-arg did not resolve target within that dir: %s", s)
+	}
+}
+
+// writeTestModule lays down a three-package module: beta imports alpha; alpha
+// and beta are both importable; gamma imports nothing.
+func writeTestModule(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "go.mod"), "module example.com/testmod\n\ngo 1.26.2\n")
+	mustWriteFile(t, filepath.Join(dir, "alpha", "alpha.go"), "package alpha\n\ntype Widget struct{}\n")
+	mustWriteFile(t, filepath.Join(dir, "beta", "beta.go"), `package beta
+
+import "example.com/testmod/alpha"
+
+func Make() alpha.Widget { return alpha.Widget{} }
+`)
+	mustWriteFile(t, filepath.Join(dir, "gamma", "gamma.go"), "package gamma\n\nconst N = 1\n")
+	return dir
+}
+
+func TestRunPkg_List(t *testing.T) {
+	dir := writeTestModule(t)
+	var out, errOut strings.Builder
+	code := run([]string{"pkg", "list", "--dir", dir}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr: %s", code, errOut.String())
+	}
+	for _, want := range []string{"example.com/testmod/alpha", "example.com/testmod/beta", "example.com/testmod/gamma"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("pkg list missing %q:\n%s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "fmt") {
+		t.Errorf("module-only list should not contain stdlib packages:\n%s", out.String())
+	}
+}
+
+func TestRunPkg_Importers(t *testing.T) {
+	dir := writeTestModule(t)
+	var out, errOut strings.Builder
+	code := run([]string{"pkg", "importers", "alpha", "--dir", dir}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr: %s", code, errOut.String())
+	}
+	if strings.TrimSpace(out.String()) != "example.com/testmod/beta" {
+		t.Errorf("importers of alpha = %q, want beta only", out.String())
+	}
+}
+
+func TestRunPkg_ImportsJSON(t *testing.T) {
+	dir := writeTestModule(t)
+	var out, errOut strings.Builder
+	code := run([]string{"pkg", "imports", "beta", "--dir", dir, "--format", "json"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr: %s", code, errOut.String())
+	}
+	s := out.String()
+	if !strings.Contains(s, `"pkgPath": "example.com/testmod/beta"`) ||
+		!strings.Contains(s, "example.com/testmod/alpha") {
+		t.Errorf("pkg imports json mismatch:\n%s", s)
+	}
+}
+
+func TestRunPkg_Get(t *testing.T) {
+	dir := writeTestModule(t)
+	var out, errOut strings.Builder
+	code := run([]string{"pkg", "get", "alpha", "--dir", dir, "--format", "json"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr: %s", code, errOut.String())
+	}
+	for _, want := range []string{`"pkgPath"`, `"publicApi"`, `"importers"`} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("pkg get json missing %s:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestRunPkg_Errors(t *testing.T) {
+	dir := writeTestModule(t)
+	var out, errOut strings.Builder
+	if code := run([]string{"pkg"}, &out, &errOut); code != 2 {
+		t.Errorf("bare pkg should exit 2, got %d", code)
+	}
+	errOut.Reset()
+	if code := run([]string{"pkg", "bogus"}, &out, &errOut); code != 2 {
+		t.Errorf("unknown subcommand should exit 2, got %d", code)
+	}
+	errOut.Reset()
+	if code := run([]string{"pkg", "importers", "--dir", dir}, &out, &errOut); code != 2 {
+		t.Errorf("importers without target should exit 2, got %d", code)
+	}
+	errOut.Reset()
+	if code := run([]string{"pkg", "importers", "nosuchpkg", "--dir", dir}, &out, &errOut); code != 1 {
+		t.Errorf("unknown package should exit 1, got %d", code)
+	}
+}
+
+func TestDirArg(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		in     string
+		wantOK bool
+	}{
+		{dir, true},                      // absolute existing dir
+		{".", true},                      // cwd
+		{"internal/loader", false},       // bare import-path name stays a target
+		{"github.com/acme/tasks", false}, // bare package path stays a target
+		{"./does-not-exist-xyz", false},  // path-like but missing
+		{"", false},                      // empty
+	}
+	for _, c := range cases {
+		if _, ok := dirArg(c.in); ok != c.wantOK {
+			t.Errorf("dirArg(%q) ok = %v, want %v", c.in, ok, c.wantOK)
+		}
 	}
 }
 
@@ -284,16 +270,6 @@ func mustWriteFile(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
-	}
-}
-
-func writeFile(t *testing.T, path, contents string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("MkdirAll(%s) error = %v", path, err)
-	}
-	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
-		t.Fatalf("WriteFile(%s) error = %v", path, err)
 	}
 }
 

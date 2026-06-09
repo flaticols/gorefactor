@@ -8,15 +8,13 @@ import (
 )
 
 // buildTreeLines converts reference edges for a specific symbol into renderable
-// text lines for the tree pane, grouped by pkg or file.
+// text lines for the references pane, grouped by pkg, file, or caller func.
 // The returned refs slice is parallel to lines: non-zero entries point to the
 // source file and line of the reference (child rows); header rows have zero values.
 func buildTreeLines(
 	edges []graph.Edge,
 	symID int,
 	group GroupMode,
-	violOnly bool,
-	violPkgs map[string]bool,
 	shortPkg func(string) string,
 ) ([]string, []treeRef) {
 	if shortPkg == nil {
@@ -37,15 +35,15 @@ func buildTreeLines(
 	}
 	switch group {
 	case GroupFile:
-		return treeByFile(relevant, violOnly, violPkgs)
+		return treeByFile(relevant)
 	case GroupFunc:
-		return treeByFunc(relevant, violOnly, violPkgs, shortPkg)
+		return treeByFunc(relevant, shortPkg)
 	default:
-		return treeByPkg(relevant, violOnly, violPkgs, shortPkg)
+		return treeByPkg(relevant, shortPkg)
 	}
 }
 
-func treeByPkg(edges []graph.Edge, violOnly bool, violPkgs map[string]bool, shortPkg func(string) string) ([]string, []treeRef) {
+func treeByPkg(edges []graph.Edge, shortPkg func(string) string) ([]string, []treeRef) {
 	groups := make(map[string][]graph.Edge)
 	for _, e := range edges {
 		pkg := e.CallerPkg
@@ -64,32 +62,21 @@ func treeByPkg(edges []graph.Edge, violOnly bool, violPkgs map[string]bool, shor
 	var refs []treeRef
 	for _, pkg := range pkgs {
 		es := groups[pkg]
-		isViol := violPkgs[pkg]
-		if violOnly && !isViol {
-			continue
-		}
-		marker := "✓"
-		if isViol {
-			marker = styleViolation.Render("✗")
-		}
-		lines = append(lines, fmt.Sprintf("  %s %s (%d refs)", marker, shortPkg(pkg), len(es)))
+		lines = append(lines, fmt.Sprintf("  %s (%d refs)", shortPkg(pkg), len(es)))
 		refs = append(refs, treeRef{})
 		for _, e := range es {
 			sameMark := ""
 			if e.SamePkg {
 				sameMark = " ~"
 			}
-			lines = append(lines, fmt.Sprintf("      %s:%d%s", e.File, e.Line, sameMark))
+			lines = append(lines, fmt.Sprintf("      %s:%d  %s%s", e.File, e.Line, string(e.Kind), sameMark))
 			refs = append(refs, treeRef{file: e.File, line: e.Line})
 		}
-	}
-	if len(lines) == 0 {
-		return []string{"  (no violations)"}, []treeRef{{}}
 	}
 	return lines, refs
 }
 
-func treeByFunc(edges []graph.Edge, violOnly bool, violPkgs map[string]bool, shortPkg func(string) string) ([]string, []treeRef) {
+func treeByFunc(edges []graph.Edge, shortPkg func(string) string) ([]string, []treeRef) {
 	type funcKey struct{ pkg, fn string }
 	groups := make(map[funcKey][]graph.Edge)
 	for _, e := range edges {
@@ -114,16 +101,7 @@ func treeByFunc(edges []graph.Edge, violOnly bool, violPkgs map[string]bool, sho
 	var refs []treeRef
 	for _, key := range keys {
 		es := groups[key]
-		pkg := key.pkg
-		isViol := violPkgs[pkg]
-		if violOnly && !isViol {
-			continue
-		}
-		marker := "✓"
-		if isViol {
-			marker = styleViolation.Render("✗")
-		}
-		lines = append(lines, fmt.Sprintf("  %s %s.%s (%d refs)", marker, shortPkg(pkg), key.fn, len(es)))
+		lines = append(lines, fmt.Sprintf("  %s.%s (%d refs)", shortPkg(key.pkg), key.fn, len(es)))
 		refs = append(refs, treeRef{})
 		for _, e := range es {
 			sameMark := ""
@@ -134,13 +112,10 @@ func treeByFunc(edges []graph.Edge, violOnly bool, violPkgs map[string]bool, sho
 			refs = append(refs, treeRef{file: e.File, line: e.Line})
 		}
 	}
-	if len(lines) == 0 {
-		return []string{"  (no violations)"}, []treeRef{{}}
-	}
 	return lines, refs
 }
 
-func treeByFile(edges []graph.Edge, violOnly bool, violPkgs map[string]bool) ([]string, []treeRef) {
+func treeByFile(edges []graph.Edge) ([]string, []treeRef) {
 	type fileKey struct{ file, pkg string }
 	groups := make(map[fileKey][]graph.Edge)
 	for _, e := range edges {
@@ -162,23 +137,12 @@ func treeByFile(edges []graph.Edge, violOnly bool, violPkgs map[string]bool) ([]
 	var refs []treeRef
 	for _, k := range keys {
 		es := groups[k]
-		isViol := violPkgs[k.pkg]
-		if violOnly && !isViol {
-			continue
-		}
-		marker := "✓"
-		if isViol {
-			marker = styleViolation.Render("✗")
-		}
-		lines = append(lines, fmt.Sprintf("  %s %s", marker, k.file))
+		lines = append(lines, fmt.Sprintf("  %s", k.file))
 		refs = append(refs, treeRef{})
 		for _, e := range es {
 			lines = append(lines, fmt.Sprintf("      :%d  %s", e.Line, string(e.Kind)))
 			refs = append(refs, treeRef{file: e.File, line: e.Line})
 		}
-	}
-	if len(lines) == 0 {
-		return []string{"  (no violations)"}, []treeRef{{}}
 	}
 	return lines, refs
 }

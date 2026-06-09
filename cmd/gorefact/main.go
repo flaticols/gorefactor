@@ -1,360 +1,116 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
-	"flag"
+	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
-	"syscall"
 
-	"go.flaticols.dev/gorefactor/internal/loader"
-	"go.flaticols.dev/gorefactor/internal/rpc"
-	"go.flaticols.dev/gorefactor/internal/rules"
+	"github.com/spf13/cobra"
 )
-
-const defaultRulesFile = "gorefact.rules.toml"
 
 // Version is injected at build time via -ldflags "-X main.Version=x.y.z".
 // Falls back to debug.ReadBuildInfo (works for `go install` from a tagged release).
 var Version string
+
+// exitErr carries an explicit process exit code out of a cobra RunE. The
+// wrapped error (if any) is printed to stderr by run().
+type exitErr struct {
+	code int
+	err  error
+}
+
+func (e *exitErr) Error() string {
+	if e.err != nil {
+		return e.err.Error()
+	}
+	return ""
+}
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		if isTTY() {
-			return runInspect(nil, stdout, stderr)
-		}
-		printRootHelp(stderr)
-		return 2
-	}
+	root := newRootCmd()
+	root.SetArgs(args)
+	root.SetOut(stdout)
+	root.SetErr(stderr)
 
-	switch args[0] {
-	case "inspect":
-		return runInspect(args[1:], stdout, stderr)
-	case "help", "-h", "--help":
-		return runHelp(args[1:], stdout, stderr)
-	case "check":
-		return runCheck(args[1:], stdout, stderr)
-	case "serve":
-		return runServe(args[1:], stdout, stderr)
-	case "version":
-		return runVersion(args[1:], stdout, stderr)
-	case "validate-rules":
-		return runValidateRules(args[1:], stdout, stderr)
-	default:
-		// If the first arg looks like a package path or dir, treat as inspect target.
-		if looksLikeTarget(args[0]) {
-			return runInspect(args, stdout, stderr)
-		}
-		fmt.Fprintf(stderr, "unknown subcommand %q\n\n", args[0])
-		printRootHelp(stderr)
-		return 2
-	}
-}
-
-func runCheck(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("check", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printCheckHelp(fs.Output())
-		printFlagDefaults(fs)
-	}
-
-	var (
-		rulesPath = fs.String("rules", defaultRulesFile, "path to gorefact.rules.toml")
-		format    = fs.String("format", "text", "output format: text|json|md|qf")
-		dir       = fs.String("dir", ".", "working directory")
-		tests     = fs.Bool("tests", false, "include tests")
-		filterPkg = fs.String("filter-pkg", "", "only include packages containing this path fragment")
-	)
-
-	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
-			return 0
-		}
-		return 2
-	}
-	resolvedRulesPath := resolvePath(*dir, *rulesPath)
-	progress := func(stage string) {
-		fmt.Fprintf(stderr, "%s...\n", title(stage))
-	}
-
-	res, err := loader.Load(loader.Config{
-		Dir:       *dir,
-		Tests:     *tests,
-		FilterPkg: *filterPkg,
-		Patterns:  fs.Args(),
-		Progress:  progress,
-	}, loader.DepthFull)
-	if err != nil {
-		fmt.Fprintf(stderr, "build failed: %v\n", err)
-		return 1
-	}
-	g := res.Graph
-
-	ruleSet, err := rules.Parse(resolvedRulesPath)
-	if err != nil {
-		fmt.Fprintf(stderr, "parse rules failed: %v\n", err)
-		return 1
-	}
-
-	violations := rules.Check(g, ruleSet)
-	formatOpts := rules.FormatOptions{BaseDir: *dir}
-
-	switch strings.ToLower(strings.TrimSpace(*format)) {
-	case "text":
-		_, _ = io.WriteString(stdout, rules.FormatText(violations, formatOpts))
-	case "json":
-		data, err := rules.FormatJSON(violations, len(ruleSet), formatOpts)
-		if err != nil {
-			fmt.Fprintf(stderr, "format json failed: %v\n", err)
-			return 1
-		}
-		_, _ = stdout.Write(append(data, '\n'))
-	case "md", "markdown":
-		_, _ = io.WriteString(stdout, rules.FormatMarkdown(violations, len(ruleSet), formatOpts))
-	case "qf", "quickfix":
-		_, _ = io.WriteString(stdout, rules.FormatQuickfix(violations, formatOpts))
-	default:
-		fmt.Fprintf(stderr, "unknown format %q\n", *format)
-		return 2
-	}
-
-	fmt.Fprintf(stderr, "Found %d violations across %d rules\n", len(violations), len(ruleSet))
-	if len(violations) > 0 {
-		return 1
-	}
-	return 0
-}
-
-func runServe(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printServeHelp(fs.Output())
-		printFlagDefaults(fs)
-	}
-
-	var (
-		rulesPath = fs.String("rules", defaultRulesFile, "path to gorefact.rules.toml")
-		dir       = fs.String("dir", ".", "working directory")
-		tests     = fs.Bool("tests", false, "include tests")
-		filterPkg = fs.String("filter-pkg", "", "only include packages containing this path fragment")
-	)
-
-	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
-			return 0
-		}
-		return 2
-	}
-	resolvedRulesPath := resolvePath(*dir, *rulesPath)
-	progress := func(stage string) {
-		_ = writeNotification(stdout, "gorefact.progress", map[string]string{"stage": title(stage)})
-	}
-
-	res, err := loader.Load(loader.Config{
-		Dir:       *dir,
-		Tests:     *tests,
-		FilterPkg: *filterPkg,
-		Patterns:  fs.Args(),
-		Progress:  progress,
-	}, loader.DepthFull)
-	if err != nil {
-		fmt.Fprintf(stderr, "build failed: %v\n", err)
-		return 1
-	}
-	g := res.Graph
-
-	var ruleSet []rules.Rule
-	if strings.TrimSpace(resolvedRulesPath) != "" {
-		ruleSet, err = rules.Parse(resolvedRulesPath)
-		if err != nil {
-			fmt.Fprintf(stderr, "parse rules failed: %v\n", err)
-			return 1
-		}
-	}
-
-	if err := writeNotification(stdout, "gorefact.ready", map[string]any{
-		"rules": len(ruleSet),
-	}); err != nil {
-		fmt.Fprintf(stderr, "ready notification failed: %v\n", err)
-		return 1
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
-
-	srv := rpc.NewServer(g, ruleSet, stdout)
-	if err := srv.Serve(ctx, os.Stdin); err != nil && err != context.Canceled {
-		fmt.Fprintf(stderr, "rpc server failed: %v\n", err)
-		return 1
-	}
-	return 0
-}
-
-func runVersion(args []string, stdout, stderr io.Writer) int {
-	if len(args) > 0 {
-		switch strings.TrimSpace(args[0]) {
-		case "-h", "--help", "help":
-			printVersionHelp(stdout)
-			return 0
-		default:
-			fmt.Fprintf(stderr, "version does not accept arguments: %s\n\n", strings.Join(args, " "))
-			printVersionHelp(stderr)
-			return 2
-		}
-	}
-	_, _ = fmt.Fprintf(stdout, "gorefact %s\n", version())
-	return 0
-}
-
-func runValidateRules(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("validate-rules", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printValidateRulesHelp(fs.Output())
-		printFlagDefaults(fs)
-	}
-
-	rulesPath := fs.String("rules", defaultRulesFile, "path to gorefact.rules.toml")
-	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
-			return 0
-		}
-		return 2
-	}
-	ruleSet, err := rules.Parse(*rulesPath)
-	if err != nil {
-		fmt.Fprintf(stderr, "parse rules failed: %v\n", err)
-		return 1
-	}
-	_, _ = fmt.Fprintf(stdout, "validated %d rules\n", len(ruleSet))
-	return 0
-}
-
-func runHelp(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		printRootHelp(stdout)
+	err := root.Execute()
+	if err == nil {
 		return 0
 	}
-	if len(args) > 1 {
-		fmt.Fprintf(stderr, "help accepts at most one topic\n\n")
-		printRootHelp(stderr)
-		return 2
+	if ee, ok := errors.AsType[*exitErr](err); ok {
+		if ee.err != nil {
+			fmt.Fprintln(stderr, ee.err)
+		}
+		return ee.code
 	}
-	switch strings.TrimSpace(args[0]) {
-	case "inspect":
-		printInspectHelp(stdout)
-		return 0
-	case "check":
-		printCheckHelp(stdout)
-		return 0
-	case "serve":
-		printServeHelp(stdout)
-		return 0
-	case "version":
-		printVersionHelp(stdout)
-		return 0
-	case "validate-rules":
-		printValidateRulesHelp(stdout)
-		return 0
-	default:
-		fmt.Fprintf(stderr, "unknown help topic %q\n\n", args[0])
-		printRootHelp(stderr)
-		return 2
+	// Cobra usage errors (unknown command/flag, bad arg count).
+	fmt.Fprintln(stderr, err)
+	return 2
+}
+
+func newRootCmd() *cobra.Command {
+	var opts exploreOpts
+	root := &cobra.Command{
+		Use:   "gorefact [dir] [target]",
+		Short: "Package-centric explorer for Go import and reference graphs",
+		Long: `gorefact is a package-centric explorer for Go import and reference graphs.
+
+With no flags on a terminal it opens the interactive explorer. With a target
+and --format (or a non-TTY stdout) it prints a package report: public API,
+importers, and a reference summary.
+
+The first positional is the working directory when it is an explicit path to
+an existing directory (".", "./x", "/abs", "~/x"); otherwise it is the target.
+
+Target formats:
+  github.com/acme/tasks              entire package
+  tasks                              bare suffix, matched against module packages
+  github.com/acme/tasks.Run          symbol named Run
+  github.com/acme/tasks.Engine.Calc  method Calc on type Engine`,
+		Example: `  gorefact
+  gorefact ~/code/myproj
+  gorefact ./sub internal/loader
+  gorefact --format json github.com/acme/tasks | jq .
+  gorefact pkg importers internal/loader`,
+		Args:          cobra.MaximumNArgs(2),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		CompletionOptions: cobra.CompletionOptions{
+			HiddenDefaultCmd: true,
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			opts.formatExplicit = cmd.Flags().Changed("format")
+			return runExplore(opts, args, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
 	}
+
+	fl := root.Flags()
+	fl.StringVar(&opts.dir, "dir", ".", "working directory")
+	fl.StringVar(&opts.format, "format", "text", "output format: text|json|md (non-TTY only)")
+	fl.BoolVar(&opts.tests, "tests", false, "include test packages")
+	fl.StringVar(&opts.filterPkg, "filter-pkg", "", "only include packages containing this path fragment")
+	fl.BoolVar(&opts.moduleOnly, "module-only", true, "restrict importers and references to the main module")
+
+	root.AddCommand(newPkgCmd(), newVersionCmd())
+	return root
 }
 
-func printRootHelp(w io.Writer) {
-	fmt.Fprintln(w, "gorefact inspects Go package dependencies and reports architectural violations.")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  gorefact <command> [flags] [packages...]")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Commands:")
-	fmt.Fprintln(w, "  inspect         show what imports or references a package/symbol (TUI or text)")
-	fmt.Fprintln(w, "  check           build the graph and report rule violations")
-	fmt.Fprintln(w, "  serve           start the JSON-RPC server for the Neovim plugin")
-	fmt.Fprintln(w, "  validate-rules  parse and validate a rules file without loading packages")
-	fmt.Fprintln(w, "  version         print the gorefact version")
-	fmt.Fprintln(w, "  help            show general or command-specific help")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Examples:")
-	fmt.Fprintln(w, "  gorefact check ./...")
-	fmt.Fprintln(w, "  gorefact check --format json --dir . ./...")
-	fmt.Fprintln(w, "  gorefact serve --rules gorefact.rules.toml ./...")
-	fmt.Fprintln(w, "  gorefact help check")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Run `gorefact help <command>` or `gorefact <command> -h` for details.")
-}
-
-func printCheckHelp(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  gorefact check [flags] [packages...]")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Build the call graph for the target packages, evaluate dependency rules, and")
-	fmt.Fprintln(w, "print violations in text, JSON, Markdown, or quickfix format.")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "If no package pattern is provided, gorefact defaults to `./...`.")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Examples:")
-	fmt.Fprintln(w, "  gorefact check ./...")
-	fmt.Fprintln(w, "  gorefact check --rules gorefact.rules.toml --format json ./...")
-	fmt.Fprintln(w, "  gorefact check --dir /path/to/repo --filter-pkg tasks ./...")
-	fmt.Fprintln(w)
-}
-
-func printServeHelp(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  gorefact serve [flags] [packages...]")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Build the call graph once, load rules, then serve newline-delimited JSON-RPC")
-	fmt.Fprintln(w, "requests on stdin/stdout for the Neovim plugin.")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "If no package pattern is provided, gorefact defaults to `./...`.")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Examples:")
-	fmt.Fprintln(w, "  gorefact serve ./...")
-	fmt.Fprintln(w, "  gorefact serve --dir /path/to/repo --rules gorefact.rules.toml ./...")
-	fmt.Fprintln(w)
-}
-
-func printVersionHelp(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  gorefact version")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Print the gorefact binary version.")
-}
-
-func printValidateRulesHelp(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  gorefact validate-rules [flags]")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Parse the TOML rules file and report whether it is valid without loading any")
-	fmt.Fprintln(w, "Go packages.")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Examples:")
-	fmt.Fprintln(w, "  gorefact validate-rules")
-	fmt.Fprintln(w, "  gorefact validate-rules --rules gorefact.rules.toml")
-	fmt.Fprintln(w)
-}
-
-func printFlagDefaults(fs *flag.FlagSet) {
-	if fs == nil {
-		return
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the gorefact version",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, _ []string) {
+			fmt.Fprintf(cmd.OutOrStdout(), "gorefact %s\n", version())
+		},
 	}
-	fmt.Fprintln(fs.Output(), "Flags:")
-	fs.PrintDefaults()
 }
 
 func title(stage string) string {
@@ -362,10 +118,6 @@ func title(stage string) string {
 	switch stage {
 	case "loading packages":
 		return "Loading packages"
-	case "building ssa":
-		return "Building SSA"
-	case "building call graph":
-		return "Building call graph"
 	case "done":
 		return "Done"
 	case "loading package graph":
@@ -375,20 +127,6 @@ func title(stage string) string {
 	default:
 		return filepath.Clean(stage)
 	}
-}
-
-// looksLikeTarget returns true when s looks like a package path or dir rather
-// than a subcommand name: starts with "." or "/", or contains a "/".
-func looksLikeTarget(s string) bool {
-	return strings.HasPrefix(s, ".") || strings.HasPrefix(s, "/") || strings.Contains(s, "/")
-}
-
-func resolvePath(baseDir, path string) string {
-	path = strings.TrimSpace(path)
-	if path == "" || filepath.IsAbs(path) {
-		return path
-	}
-	return filepath.Join(baseDir, path)
 }
 
 func version() string {
@@ -430,13 +168,4 @@ func shortRevision(rev string) string {
 		return rev[:12]
 	}
 	return rev
-}
-
-func writeNotification(w io.Writer, method string, params any) error {
-	enc := json.NewEncoder(w)
-	return enc.Encode(rpc.Notification{
-		JSONRPC: "2.0",
-		Method:  method,
-		Params:  params,
-	})
 }

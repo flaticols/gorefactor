@@ -9,12 +9,13 @@ type keyMap struct {
 	Down       key.Binding
 	Left       key.Binding
 	Right      key.Binding
+	Enter      key.Binding
 	Back       key.Binding
+	PickerMode key.Binding
 	Group      key.Binding
-	Violations key.Binding
 	ModuleOnly key.Binding
-	Detail     key.Binding
 	Open       key.Binding
+	Copy       key.Binding
 	Help       key.Binding
 	Quit       key.Binding
 }
@@ -26,25 +27,26 @@ func defaultKeys() keyMap {
 		Down:       key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("j/↓", "down")),
 		Left:       key.NewBinding(key.WithKeys("h", "shift+tab"), key.WithHelp("h", "left pane")),
 		Right:      key.NewBinding(key.WithKeys("l", "tab"), key.WithHelp("l", "right pane")),
+		Enter:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select/expand")),
 		Back:       key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
-		Group:      key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "group")),
-		Violations: key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "violations")),
+		PickerMode: key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "picker mode")),
+		Group:      key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "group/flat")),
 		ModuleOnly: key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "module-only")),
-		Detail:     key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "detail")),
 		Open:       key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "open in $EDITOR")),
+		Copy:       key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "copy path")),
 		Help:       key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Quit:       key.NewBinding(key.WithKeys("q", "ctrl+c", "ctrl+q"), key.WithHelp("q", "quit")),
 	}
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Search, k.Up, k.Down, k.Open, k.Help, k.Quit}
+	return []key.Binding{k.Search, k.Up, k.Down, k.Enter, k.PickerMode, k.Help, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Search, k.Up, k.Down, k.Left, k.Right, k.Back},
-		{k.Group, k.Violations, k.ModuleOnly, k.Detail, k.Open},
+		{k.Up, k.Down, k.Left, k.Right, k.Enter, k.Back},
+		{k.Search, k.PickerMode, k.Group, k.ModuleOnly, k.Open, k.Copy},
 		{k.Help, k.Quit},
 	}
 }

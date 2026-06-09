@@ -12,10 +12,10 @@ go install ./cmd/gorefact
 GOCACHE=/tmp/gocache go test ./...
 
 # Run tests for a specific package
-go test ./internal/rpc/...
+go test ./internal/inspect/...
 
 # Run a single test
-go test ./internal/rpc/ -run TestName
+go test ./internal/inspect/ -run TestName
 
 # Lint (uses standard go vet)
 go vet ./...
@@ -23,21 +23,17 @@ go vet ./...
 
 ## Architecture
 
-**gorefact** is a Go call-graph explorer that checks architectural dependency rules. It has two modes: a one-shot CLI (`check`) and a long-lived JSON-RPC server (`serve`) consumed by a Neovim plugin.
+**gorefact** is a package-centric explorer for Go import and reference graphs. It opens an interactive TUI on a terminal, or prints a structured package report (text / JSON / markdown) for non-TTY use.
 
 ### Go backend (`cmd/`, `internal/`)
 
 Data flows in one direction:
 
-1. **`internal/graph`** — builds a static call graph using `golang.org/x/tools/go/callgraph`. `Graph` holds `[]Func` and `[]Edge`; `Index()` must be called before lookups.
-2. **`internal/rules`** — parses TOML `[[deny]]` rules and walks edges to produce `[]Violation`. Format functions (`FormatText`, `FormatJSON`, `FormatMarkdown`, `FormatQuickfix`) live here.
-3. **`internal/treeview`** — builds caller-tree nodes from the graph for the Neovim tree buffer.
-4. **`internal/rpc`** — a newline-delimited JSON-RPC 2.0 server over stdin/stdout. Methods: `gorefact.search`, `gorefact.tree`, `gorefact.detail`, `gorefact.funcAtPos`, `gorefact.check`. The server holds the graph and rules in memory after startup; the graph is never reloaded without restart.
-5. **`cmd/gorefact/main.go`** — CLI dispatcher with subcommands `check`, `serve`, `version`, `validate-rules`.
-
-### Neovim plugin (`nvim/`)
-
-Lua plugin under `nvim/lua/` + vimdoc under `nvim/doc/`. The plugin spawns `gorefact serve` as a subprocess and communicates via JSON-RPC over its stdin/stdout. It manages three buffer types: search float, tree split, and detail split.
+1. **`internal/graph`** — type definitions (`Func`, `Edge`, `Symbol`, `Graph`) shared by the loader, inspect, and TUI layers.
+2. **`internal/loader`** — builds the package import graph (`pkggraph.go`: `BuildPackageGraph`, `PackageGraph.ImportersOf`, `AllPaths`) and walks source references (`refs.go`: `WalkRefs`); each edge records its enclosing `CallerPkg`/`CallerFunc`.
+3. **`internal/inspect`** — resolves a target into a package report: `ResolveTarget` (public API with positions + reference edges), `ListPackages`, `LoadAllSymbols`, `LoadStructMembers`. Format functions `FormatText`, `FormatJSON`, `FormatMarkdown` render the report.
+4. **`internal/tui`** — the BubbleTea three-pane explorer (package picker, public API, importers/usage) built on the inspect + loader data.
+5. **`cmd/gorefact/main.go`** — CLI dispatcher. The bare command (with an optional target) opens the explorer on a TTY or prints a report otherwise. Subcommands: `pkg <list|get|imports|importers>` (scriptable graph queries, never the TUI), `version`, `help`.
 
 ### Release pipeline
 

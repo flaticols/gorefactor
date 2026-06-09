@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/help"
@@ -11,153 +13,160 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/lipgloss/tree"
 
 	"go.flaticols.dev/gorefactor/internal/graph"
 	"go.flaticols.dev/gorefactor/internal/inspect"
+	"go.flaticols.dev/gorefactor/internal/loader"
 )
 
-// pkgListMsg carries the T1 package list loaded in the background.
-type pkgListMsg struct {
-	paths  []string
-	module string
+// graphMsg carries the T1 package graph loaded once at startup.
+type graphMsg struct {
+	pg  *loader.PackageGraph
+	err error
 }
 
-// structMembersMsg carries the struct members loaded for an inspected struct.
+// allSymbolsMsg carries the global symbol index loaded in the background.
+type allSymbolsMsg []symbolEntry
+
+// loadDoneMsg is sent when ResolveTargetWithGraph completes in the background.
+// pkgPath identifies which package the result belongs to so a stale load that
+// resolves after the user moved on does not clobber the active panes.
+type loadDoneMsg struct {
+	pkgPath string
+	result  *inspect.InspectResult
+	err     error
+}
+
+// structMembersMsg carries struct/interface members loaded for a type symbol.
 type structMembersMsg struct {
 	pkgPath  string
 	typeName string
 	members  []inspect.StructMember
 }
 
-// allSymbolsMsg carries the global symbol index loaded in the background.
-type allSymbolsMsg []symbolEntry
+type editorDoneMsg struct{ err error }
 
-// treeRef is a (file, line) pointer for a rendered tree child row.
-// Zero value means the row is a group header with no direct reference.
+// treeRef is a (file, line) pointer for a rendered reference row.
 type treeRef struct {
 	file string
 	line int
 }
 
-type editorDoneMsg struct{ err error }
-
-// GroupMode controls how reference edges are grouped in the tree pane.
+// GroupMode controls how reference edges / importers are grouped in pane 3.
 type GroupMode int
 
 const (
 	GroupPkg  GroupMode = iota // group by caller package path
 	GroupFile                  // group by file path
-	GroupFunc                  // group by caller function (pkg.Func or pkg.(*Recv).Method)
+	GroupFunc                  // group by caller function
 )
 
+// pane identifies the focused column.
 type pane int
 
 const (
-	paneList pane = iota
-	paneTree
+	panePicker pane = iota // pane 1: package picker
+	paneAPI                // pane 2: public API
+	paneRefs               // pane 3: importers / references
 )
 
-type viewMode int
-
-const (
-	viewSymbols viewMode = iota
-	viewStruct
-)
-
-const detailPanelHeight = 9
-
-// symbolEntry is one row in the symbol list pane.
+// symbolEntry is one row in the API symbol list (and the search index).
 type symbolEntry struct {
 	sym      graph.Symbol
 	refCount int
 }
 
-// loadDoneMsg is sent when ResolveTarget completes in the background.
-type loadDoneMsg struct {
-	result *inspect.InspectResult
-	err    error
-}
-
-// Model is the Bubble Tea model for the inspect TUI.
-// Navigation is modal: normal mode uses vim keys; "/" enters search/insert mode.
+// Model is the Bubble Tea model for the package-centric explorer.
 type Model struct {
-	cfg    inspect.Config
-	result *inspect.InspectResult
+	cfg inspect.Config
 
-	input     textinput.Model
-	spinner   spinner.Model
-	inputMode bool // true = search/insert mode, false = normal mode
+	pg         *loader.PackageGraph
+	allPkgs    []string                          // pg.AllPaths(), set after graph load
+	cache      map[string]*inspect.InspectResult // ResolveTarget result per package path
+	allSymbols []symbolEntry                     // global search index (names only, no positions)
 
-	symbols []symbolEntry
-	listIdx int
+	modulePrefix string // main module path — stripped from displayed paths
+	moduleOnly   bool   // restrict picker/search to the main module
 
-	treeLines []string
-	treeRefs  []treeRef // parallel to treeLines: file+line for reference child rows
-	treeIdx   int
+	// Picker (pane 1).
+	pickMode    pickerMode
+	pickRows    []pickerRow
+	pickIdx     int
+	pickExpand  map[string]bool // open folder/import keys
+	selectedPkg string          // currently loaded package ("" = none)
 
-	group      GroupMode
-	violOnly   bool
-	showDetail bool // bottom detail panel toggled by i
+	// API (pane 2).
+	apiRows     []apiRow
+	apiIdx      int
+	apiExpand   map[string]bool                              // expanded type names
+	members     map[string]map[string][]inspect.StructMember // pkgPath → typeName → members
+	pendingLoad bool                                         // a ResolveTarget is in flight for selectedPkg
+	detail      bool                                         // true = pane 3 shows the selected symbol's references
+
+	// References / importers (pane 3).
+	group     GroupMode
+	refTree   bool            // pane-3 tree mode for importers (toggled by g in package focus)
+	refExpand map[string]bool // open importer-tree keys
+	refRows   []importerRow
+	refLines  []string
+	refRefs   []treeRef
+	refIdx    int
+
+	// Search (modal overlay over the picker).
+	input         textinput.Model
+	inputMode     bool
+	searchResults []searchResult
+	searchSel     int
 
 	active        pane
 	width, height int
 
-	allPkgs       []string
-	allSymbols    []symbolEntry // accumulated across all loaded targets
-	searchResults []searchResult
-	searchSel     int
-
-	modulePrefix string // main module path — stripped from displayed package paths
-	moduleOnly   bool   // search shows only packages/symbols inside the main module
-
-	view          viewMode
-	structMembers []inspect.StructMember
-	structPkg     string
-	structName    string
-	structIdx     int
-
 	keys    keyMap
 	help    help.Model
-	listVP  viewport.Model
-	treeVP  viewport.Model
+	pickVP  viewport.Model
+	apiVP   viewport.Model
+	refVP   viewport.Model
+	spinner spinner.Model
 
-	loading bool
-	err     error
+	initialTarget string
+	loadingGraph  bool
+	flash         string // transient status (e.g. "copied …"), cleared on next key
+	err           error
 }
 
-// New creates a Model with an optional pre-filled search target.
+// New creates a Model. initialTarget, if non-empty, pre-selects a package once
+// the graph finishes loading (suffix-matched against module package paths).
 func New(initialTarget string, cfg inspect.Config) Model {
 	ti := textinput.New()
-	ti.Placeholder = "/ to search  (e.g. tasks  or  github.com/acme/tasks)"
-	ti.SetValue(initialTarget)
+	ti.Placeholder = "filter packages…"
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
-	hasTarget := strings.TrimSpace(initialTarget) != ""
 	h := help.New()
 	h.ShowAll = false
-	m := Model{
-		cfg:       cfg,
-		input:     ti,
-		spinner:   sp,
-		active:    paneList,
-		loading:   hasTarget,
-		inputMode: hasTarget,
-		keys:      defaultKeys(),
-		help:      h,
-		listVP:    viewport.New(0, 0),
-		treeVP:    viewport.New(0, 0),
+
+	return Model{
+		cfg:           cfg,
+		moduleOnly:    true, // module-only by default; 'm' includes external packages
+		cache:         map[string]*inspect.InspectResult{},
+		pickExpand:    map[string]bool{},
+		apiExpand:     map[string]bool{},
+		members:       map[string]map[string][]inspect.StructMember{},
+		input:         ti,
+		spinner:       sp,
+		keys:          defaultKeys(),
+		help:          h,
+		active:        panePicker,
+		pickVP:        viewport.New(0, 0),
+		apiVP:         viewport.New(0, 0),
+		refVP:         viewport.New(0, 0),
+		initialTarget: strings.TrimSpace(initialTarget),
+		loadingGraph:  true,
 	}
-	if hasTarget {
-		m.input.Focus()
-	}
-	return m
 }
 
-// Run starts the full-screen Bubble Tea TUI. Blocks until the user quits.
+// Run starts the full-screen explorer. Blocks until the user quits.
 func Run(initialTarget string, cfg inspect.Config) error {
 	m := New(initialTarget, cfg)
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -166,24 +175,14 @@ func Run(initialTarget string, cfg inspect.Config) error {
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{textinput.Blink, loadPkgList(m.cfg), loadAllSymbols(m.cfg)}
-	if strings.TrimSpace(m.input.Value()) != "" {
-		cmds = append(cmds, doLoad(m.input.Value(), m.cfg), m.spinner.Tick)
-	}
-	return tea.Batch(cmds...)
+	return tea.Batch(textinput.Blink, m.spinner.Tick, loadGraph(m.cfg), loadAllSymbols(m.cfg))
 }
 
-func loadPkgList(cfg inspect.Config) tea.Cmd {
+// loadGraph builds the T1 package graph once at startup.
+func loadGraph(cfg inspect.Config) tea.Cmd {
 	return func() tea.Msg {
-		paths, module, _ := inspect.ListPackages(cfg)
-		return pkgListMsg{paths: paths, module: module}
-	}
-}
-
-func loadStructMembers(cfg inspect.Config, pkgPath, typeName string) tea.Cmd {
-	return func() tea.Msg {
-		ms, _ := inspect.LoadStructMembers(cfg, pkgPath, typeName)
-		return structMembersMsg{pkgPath: pkgPath, typeName: typeName, members: ms}
+		pg, err := inspect.BuildGraph(cfg)
+		return graphMsg{pg: pg, err: err}
 	}
 }
 
@@ -198,10 +197,18 @@ func loadAllSymbols(cfg inspect.Config) tea.Cmd {
 	}
 }
 
-func doLoad(target string, cfg inspect.Config) tea.Cmd {
+// resolvePkg fires a full ResolveTarget for pkgPath using the cached graph.
+func resolvePkg(cfg inspect.Config, pg *loader.PackageGraph, pkgPath string) tea.Cmd {
 	return func() tea.Msg {
-		res, err := inspect.ResolveTarget(target, cfg)
-		return loadDoneMsg{result: res, err: err}
+		res, err := inspect.ResolveTargetWithGraph(pkgPath, cfg, pg)
+		return loadDoneMsg{pkgPath: pkgPath, result: res, err: err}
+	}
+}
+
+func loadStructMembers(cfg inspect.Config, pg *loader.PackageGraph, pkgPath, typeName string) tea.Cmd {
+	return func() tea.Msg {
+		ms, _ := inspect.LoadStructMembersWithGraph(cfg, pg, pkgPath, typeName)
+		return structMembersMsg{pkgPath: pkgPath, typeName: typeName, members: ms}
 	}
 }
 
@@ -215,21 +222,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.help.Width = m.width
 		return m, nil
 
-	case pkgListMsg:
-		m.allPkgs = msg.paths
+	case graphMsg:
+		m.loadingGraph = false
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.pg = msg.pg
+		m.allPkgs = msg.pg.AllPaths()
 		if m.modulePrefix == "" {
-			m.modulePrefix = msg.module
+			m.modulePrefix = msg.pg.Module
 		}
-		if m.inputMode {
-			m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols, m.modulePrefix, m.moduleOnly)
-		}
-		return m, nil
-
-	case structMembersMsg:
-		if m.view == viewStruct && m.structPkg == msg.pkgPath && m.structName == msg.typeName {
-			m.structMembers = msg.members
-			m.structIdx = 0
-			m = updateMemberTree(m)
+		m = m.rebuildPicker()
+		// Auto-select an initial target if provided. Accept either an exact
+		// package path or a path suffix (e.g. "internal/loader").
+		if m.initialTarget != "" {
+			pkgPath, _, _ := inspect.ParseTarget(m.initialTarget)
+			m.initialTarget = ""
+			if _, ok := m.pg.Nodes[pkgPath]; !ok {
+				if r := suffixMatchPath(pkgPath, m.allPkgs); r != "" {
+					pkgPath = r
+				}
+			}
+			if _, ok := m.pg.Nodes[pkgPath]; ok {
+				return m.selectPackage(pkgPath)
+			}
 		}
 		return m, nil
 
@@ -241,619 +258,562 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case loadDoneMsg:
-		m.loading = false
-		m.inputMode = false
-		m.input.Blur()
-		m.searchResults = nil
-		if msg.err != nil {
-			m.err = msg.err
-			return m, nil
+		if msg.err == nil && msg.result != nil {
+			m.cache[msg.pkgPath] = msg.result
 		}
-		m.err = nil
-		m.result = msg.result
-		m = buildSymbolList(m)
-		m = updateTree(m)
-		m.active = paneList
-		m.view = viewSymbols
-		m.structMembers = nil
-		// Auto-open struct/interface member view if the load resolved to a
-		// single type symbol (typical when user picks pkg.StructName from search).
-		if len(m.symbols) == 1 && m.symbols[0].sym.Kind == "type" {
-			sel := m.symbols[0].sym
-			m.view = viewStruct
-			m.structPkg = sel.Package
-			m.structName = sel.Name
-			m.structIdx = 0
-			return m, loadStructMembers(m.cfg, sel.Package, sel.Name)
+		// Only repaint if this load is still the active selection.
+		if msg.pkgPath == m.selectedPkg {
+			m.pendingLoad = false
+			if msg.err != nil {
+				m.err = msg.err
+				return m, nil
+			}
+			m.err = nil
+			m = m.applyResult(msg.result)
+		}
+		return m, nil
+
+	case structMembersMsg:
+		byType := m.members[msg.pkgPath]
+		if byType == nil {
+			byType = map[string][]inspect.StructMember{}
+			m.members[msg.pkgPath] = byType
+		}
+		if msg.members == nil {
+			byType[msg.typeName] = []inspect.StructMember{}
+		} else {
+			byType[msg.typeName] = msg.members
+		}
+		if msg.pkgPath == m.selectedPkg {
+			m = m.rebuildAPI()
 		}
 		return m, nil
 
 	case spinner.TickMsg:
-		if m.loading {
-			var cmd tea.Cmd
-			m.spinner, cmd = m.spinner.Update(msg)
-			return m, cmd
-		}
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+
+	case editorDoneMsg:
 		return m, nil
 
 	case tea.KeyMsg:
-		// Global keys always handled first.
 		switch msg.String() {
 		case "ctrl+c", "ctrl+q":
 			return m, tea.Quit
 		}
-
-		// Search/insert mode.
 		if m.inputMode {
-			switch msg.String() {
-			case "esc":
-				m.inputMode = false
-				m.input.Blur()
-				m.searchResults = nil
-				return m, nil
-			case "enter":
-				var q string
-				if len(m.searchResults) > 0 {
-					sel := m.searchResults[m.searchSel]
-					if sel.sym != "" {
-						q = sel.pkg + "." + sel.sym
-					} else {
-						q = sel.pkg
-					}
-					m.input.SetValue(q)
-				} else {
-					q = strings.TrimSpace(m.input.Value())
-				}
-				if q != "" {
-					m.loading = true
-					m.err = nil
-					m.inputMode = false
-					m.input.Blur()
-					m.searchResults = nil
-					return m, tea.Batch(doLoad(q, m.cfg), m.spinner.Tick)
-				}
-				m.inputMode = false
-				m.input.Blur()
-				return m, nil
-			case "j", "down":
-				if m.searchSel < len(m.searchResults)-1 {
-					m.searchSel++
-				}
-				return m, nil
-			case "k", "up":
-				if m.searchSel > 0 {
-					m.searchSel--
-				}
-				return m, nil
-			default:
-				var cmd tea.Cmd
-				m.input, cmd = m.input.Update(msg)
-				m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols, m.modulePrefix, m.moduleOnly)
-				m.searchSel = 0
-				return m, cmd
-			}
+			return m.updateSearch(msg)
 		}
-
-		// Normal mode: vim-style commands.
-		switch msg.String() {
-		case "q":
-			return m, tea.Quit
-
-		case "esc":
-			if m.view == viewStruct {
-				m.view = viewSymbols
-				m.structMembers = nil
-				m.structPkg = ""
-				m.structName = ""
-				m.structIdx = 0
-				m = updateTree(m)
-				return m, nil
-			}
-			return m, nil
-
-		case "enter":
-			if m.view == viewSymbols && m.active == paneList && m.listIdx < len(m.symbols) {
-				sel := m.symbols[m.listIdx].sym
-				if sel.Kind == "type" {
-					m.view = viewStruct
-					m.structPkg = sel.Package
-					m.structName = sel.Name
-					m.structMembers = nil
-					m.structIdx = 0
-					return m, loadStructMembers(m.cfg, sel.Package, sel.Name)
-				}
-			}
-			return m, nil
-
-		case "/":
-			m.inputMode = true
-			m.input.Focus()
-			m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols, m.modulePrefix, m.moduleOnly)
-			m.searchSel = 0
-			return m, nil
-
-		case "i":
-			m.showDetail = !m.showDetail
-			return m, nil
-
-		case "?":
-			m.help.ShowAll = !m.help.ShowAll
-			return m, nil
-
-		case "e":
-			file, line := m.currentRef()
-			if file == "" {
-				return m, nil
-			}
-			editor := os.Getenv("EDITOR")
-			if editor == "" {
-				editor = "vi"
-			}
-			args := []string{file}
-			if line > 0 {
-				args = []string{fmt.Sprintf("+%d", line), file}
-			}
-			return m, tea.ExecProcess(exec.Command(editor, args...), func(err error) tea.Msg {
-				return editorDoneMsg{err}
-			})
-
-		case "tab", "l":
-			if m.active == paneList {
-				m.active = paneTree
-			} else {
-				m.active = paneList
-			}
-			return m, nil
-
-		case "shift+tab", "h":
-			if m.active == paneTree {
-				m.active = paneList
-			} else {
-				m.active = paneTree
-			}
-			return m, nil
-
-		case "g":
-			if m.result != nil {
-				switch m.group {
-				case GroupPkg:
-					m.group = GroupFile
-				case GroupFile:
-					m.group = GroupFunc
-				default:
-					m.group = GroupPkg
-				}
-				if m.view == viewStruct {
-					m = updateMemberTree(m)
-				} else {
-					m = updateTree(m)
-				}
-			}
-			return m, nil
-
-		case "f":
-			if m.result != nil {
-				m.violOnly = !m.violOnly
-				if m.view == viewStruct {
-					m = updateMemberTree(m)
-				} else {
-					m = updateTree(m)
-				}
-			}
-			return m, nil
-
-		case "m":
-			m.moduleOnly = !m.moduleOnly
-			if m.inputMode {
-				m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols, m.modulePrefix, m.moduleOnly)
-			}
-			return m, nil
-
-		case "j", "down":
-			switch m.active {
-			case paneList:
-				if m.view == viewStruct {
-					if m.structIdx < len(m.structMembers) {
-						m.structIdx++
-						m = updateMemberTree(m)
-					}
-				} else if m.listIdx < len(m.symbols)-1 {
-					m.listIdx++
-					m = updateTree(m)
-				}
-			case paneTree:
-				if m.treeIdx < len(m.treeLines)-1 {
-					m.treeIdx++
-				}
-			}
-			return m, nil
-
-		case "k", "up":
-			switch m.active {
-			case paneList:
-				if m.view == viewStruct {
-					if m.structIdx > 0 {
-						m.structIdx--
-						m = updateMemberTree(m)
-					}
-				} else if m.listIdx > 0 {
-					m.listIdx--
-					m = updateTree(m)
-				}
-			case paneTree:
-				if m.treeIdx > 0 {
-					m.treeIdx--
-				}
-			}
-			return m, nil
-		}
+		return m.updateNormal(msg)
 	}
 	return m, nil
 }
 
-func buildSymbolList(m Model) Model {
-	if m.result == nil {
-		m.symbols = nil
+// updateSearch handles keys while the package filter overlay is open.
+func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.inputMode = false
+		m.input.Blur()
+		m.searchResults = nil
+		return m, nil
+	case "enter":
+		if len(m.searchResults) > 0 {
+			pkg := m.searchResults[m.searchSel].pkg
+			m.inputMode = false
+			m.input.Blur()
+			m.searchResults = nil
+			return m.selectPackage(pkg)
+		}
+		m.inputMode = false
+		m.input.Blur()
+		return m, nil
+	case "down", "ctrl+n":
+		if m.searchSel < len(m.searchResults)-1 {
+			m.searchSel++
+		}
+		return m, nil
+	case "up", "ctrl+p":
+		if m.searchSel > 0 {
+			m.searchSel--
+		}
+		return m, nil
+	default:
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols, m.modulePrefix, m.moduleOnly)
+		m.searchSel = 0
+		return m, cmd
+	}
+}
+
+// updateNormal handles vim-style keys when no overlay is active.
+func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.flash = "" // any key dismisses a transient status; C re-sets it below
+	switch msg.String() {
+	case "q":
+		return m, tea.Quit
+
+	case "esc":
+		// Leave symbol-detail mode: pane 3 returns to importers.
+		if m.detail {
+			m.detail = false
+			m.refIdx = 0
+			m = m.rebuildRefs()
+		}
+		return m, nil
+
+	case "?":
+		m.help.ShowAll = !m.help.ShowAll
+		return m, nil
+
+	case "/":
+		m.inputMode = true
+		m.input.Focus()
+		m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols, m.modulePrefix, m.moduleOnly)
+		m.searchSel = 0
+		return m, nil
+
+	case "t":
+		switch m.pickMode {
+		case pickerFlat:
+			m.pickMode = pickerFolder
+		case pickerFolder:
+			m.pickMode = pickerImport
+		default:
+			m.pickMode = pickerFlat
+		}
+		m.pickExpand = map[string]bool{}
+		m = m.rebuildPicker()
+		return m, nil
+
+	case "m":
+		m.moduleOnly = !m.moduleOnly
+		m.pickExpand = map[string]bool{}
+		m = m.rebuildPicker()
+		if m.inputMode {
+			m.searchResults = filterResults(m.input.Value(), m.allPkgs, m.allSymbols, m.modulePrefix, m.moduleOnly)
+		}
+		return m, nil
+
+	case "g":
+		if m.active == paneRefs && m.symbolFocus() == (graph.Symbol{}) {
+			m.refTree = !m.refTree
+			m.refExpand = map[string]bool{}
+			m.refIdx = 0
+			m = m.rebuildRefs()
+			return m, nil
+		}
+		switch m.group {
+		case GroupPkg:
+			m.group = GroupFile
+		case GroupFile:
+			m.group = GroupFunc
+		default:
+			m.group = GroupPkg
+		}
+		m = m.rebuildRefs()
+		return m, nil
+
+	case "e":
+		file, line := m.currentRef()
+		if file == "" {
+			return m, nil
+		}
+		editor := os.Getenv("EDITOR")
+		if editor == "" {
+			editor = "vi"
+		}
+		// Paths are stored relative to the working directory; resolve to an
+		// absolute path so the editor opens the file regardless of its own cwd.
+		abs := m.absPath(file)
+		args := []string{abs}
+		if line > 0 {
+			args = []string{fmt.Sprintf("+%d", line), abs}
+		}
+		return m, tea.ExecProcess(exec.Command(editor, args...), func(err error) tea.Msg {
+			return editorDoneMsg{err}
+		})
+
+	case "C":
+		// Copy the working-directory-relative path of the focused file.
+		file, _ := m.currentRef()
+		if file == "" {
+			return m, nil
+		}
+		m.flash = "copied " + file
+		return m, copyToClipboard(file)
+
+	case "tab", "l", "right":
+		m.active = (m.active + 1) % 3
+		return m, nil
+
+	case "shift+tab", "h", "left":
+		m.active = (m.active + 2) % 3
+		return m, nil
+
+	case "enter":
+		return m.handleEnter()
+
+	case "j", "down":
+		m = m.moveCursor(1)
+		return m, nil
+
+	case "k", "up":
+		m = m.moveCursor(-1)
+		return m, nil
+	}
+	return m, nil
+}
+
+// handleEnter expands/selects depending on the active pane.
+func (m Model) handleEnter() (tea.Model, tea.Cmd) {
+	switch m.active {
+	case panePicker:
+		if m.pickIdx >= len(m.pickRows) {
+			return m, nil
+		}
+		row := m.pickRows[m.pickIdx]
+		if row.expandable {
+			key := m.pickerKey(m.pickIdx)
+			m.pickExpand[key] = !m.pickExpand[key]
+			m = m.rebuildPicker()
+			return m, nil
+		}
+		if row.pkgPath != "" {
+			return m.selectPackage(row.pkgPath)
+		}
+		return m, nil
+
+	case paneAPI:
+		if m.apiIdx >= len(m.apiRows) {
+			return m, nil
+		}
+		row := m.apiRows[m.apiIdx]
+		if row.header {
+			return m, nil
+		}
+		if row.member {
+			// Members are leaf rows; focusing them keeps the parent type's
+			// references in pane 3 (handled by symbolFocus returning zero here,
+			// so importers stay shown). Nothing to expand.
+			return m, nil
+		}
+		// Focus this symbol: pane 3 switches to its references.
+		m.detail = true
+		var cmd tea.Cmd
+		if row.expandable {
+			name := row.sym.Name
+			m.apiExpand[name] = !m.apiExpand[name]
+			// Lazy-load members on first expand.
+			if m.apiExpand[name] {
+				if _, ok := m.members[m.selectedPkg][name]; !ok {
+					cmd = loadStructMembers(m.cfg, m.pg, m.selectedPkg, name)
+				}
+			}
+		}
+		m = m.rebuildAPI()
+		m = m.rebuildRefs()
+		return m, cmd
+
+	case paneRefs:
+		// Only the importer tree (package focus, tree mode) is expandable.
+		if m.symbolFocus() != (graph.Symbol{}) {
+			return m, nil
+		}
+		if m.refIdx < len(m.refRows) && m.refRows[m.refIdx].expandable {
+			m.toggleRefRow(m.refIdx)
+			m = m.rebuildRefs()
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+// moveCursor advances the active pane's selection by delta.
+func (m Model) moveCursor(delta int) Model {
+	switch m.active {
+	case panePicker:
+		m.pickIdx = clamp(m.pickIdx+delta, 0, len(m.pickRows)-1)
+	case paneAPI:
+		prev := m.apiIdx
+		m.apiIdx = nextSelectable(m.apiRows, m.apiIdx, delta)
+		// In detail mode pane 3 tracks the focused symbol; refresh on move.
+		if m.detail && m.apiIdx != prev {
+			m.refIdx = 0
+			m = m.rebuildRefs()
+		}
+	case paneRefs:
+		if m.symbolFocus() != (graph.Symbol{}) {
+			m.refIdx = clamp(m.refIdx+delta, 0, len(m.refLines)-1)
+		} else {
+			m.refIdx = clamp(m.refIdx+delta, 0, len(m.refRows)-1)
+		}
+	}
+	return m
+}
+
+// selectPackage loads (or shows from cache) the given package into panes 2/3.
+func (m Model) selectPackage(pkgPath string) (tea.Model, tea.Cmd) {
+	m.selectedPkg = pkgPath
+	m.err = nil
+	m.apiIdx = 0
+	m.apiExpand = map[string]bool{}
+	m.refIdx = 0
+	m.refTree = false
+	m.refExpand = map[string]bool{}
+	m.detail = false
+	m.active = paneAPI
+
+	if res, ok := m.cache[pkgPath]; ok {
+		m.pendingLoad = false
+		m = m.applyResult(res)
+		return m, nil
+	}
+	// Seed names instantly from the search index (no positions yet).
+	m = m.seedAPIFromIndex(pkgPath)
+	m = m.rebuildRefs()
+	m.pendingLoad = true
+	return m, resolvePkg(m.cfg, m.pg, pkgPath)
+}
+
+// seedAPIFromIndex populates pane 2 with exported symbol names from the global
+// index (no File/Line) for instant feedback before ResolveTarget returns.
+func (m Model) seedAPIFromIndex(pkgPath string) Model {
+	var syms []symbolEntry
+	for _, se := range m.allSymbols {
+		if se.sym.Package == pkgPath {
+			syms = append(syms, se)
+		}
+	}
+	m.apiRows = buildAPIRows(syms, m.apiExpand, m.members[pkgPath])
+	m.apiIdx = firstSelectable(m.apiRows)
+	return m
+}
+
+// applyResult installs a resolved InspectResult and rebuilds panes 2/3.
+func (m Model) applyResult(res *inspect.InspectResult) Model {
+	if res == nil {
 		return m
 	}
-	counts := make(map[int]int, len(m.result.Edges))
-	for _, e := range m.result.Edges {
+	m = m.rebuildAPI()
+	m = m.rebuildRefs()
+	return m
+}
+
+// rebuildPicker recomputes pane-1 rows from the current mode and expand state.
+func (m Model) rebuildPicker() Model {
+	pkgs := modulePkgs(m.allPkgs, m.modulePrefix, m.moduleOnly)
+	switch m.pickMode {
+	case pickerFolder:
+		m.pickRows = buildFolderRows(pkgs, m.shortPkg, m.pickExpand)
+	case pickerImport:
+		m.pickRows = buildImportRows(pkgs, m.pg, m.modulePrefix, m.moduleOnly, m.shortPkg, m.pickExpand)
+	default:
+		m.pickRows = buildFlatRows(pkgs, m.shortPkg)
+	}
+	m.pickIdx = clamp(m.pickIdx, 0, len(m.pickRows)-1)
+	return m
+}
+
+// rebuildAPI recomputes pane-2 rows for the selected package.
+func (m Model) rebuildAPI() Model {
+	res := m.cache[m.selectedPkg]
+	if res == nil {
+		// keep whatever was seeded from the index
+		m.apiIdx = clamp(m.apiIdx, 0, len(m.apiRows)-1)
+		return m
+	}
+	counts := make(map[int]int, len(res.Edges))
+	for _, e := range res.Edges {
 		counts[e.Callee]++
 	}
-	m.symbols = make([]symbolEntry, len(m.result.Symbols))
-	for i, s := range m.result.Symbols {
-		m.symbols[i] = symbolEntry{sym: s, refCount: counts[s.ID]}
+	syms := make([]symbolEntry, len(res.Symbols))
+	for i, s := range res.Symbols {
+		syms[i] = symbolEntry{sym: s, refCount: counts[s.ID]}
+	}
+	m.apiRows = buildAPIRows(syms, m.apiExpand, m.members[m.selectedPkg])
+	m.apiIdx = clamp(m.apiIdx, 0, len(m.apiRows)-1)
+	// Don't leave the cursor on a header row.
+	if m.apiIdx < len(m.apiRows) && m.apiRows[m.apiIdx].header {
+		m.apiIdx = nextSelectable(m.apiRows, m.apiIdx, 1)
 	}
 	return m
 }
 
-
-func updateMemberTree(m Model) Model {
-	violPkgs := map[string]bool{}
-	if m.result != nil {
-		for _, v := range m.result.Violations {
-			violPkgs[v.FromPkg] = true
-		}
-	}
-	// structIdx 0 = whole struct; 1..N = members[i-1]
-	var edges []graph.Edge
-	if m.structIdx == 0 && m.result != nil && len(m.symbols) > 0 {
-		edges = m.result.Edges
-		m.treeLines, m.treeRefs = buildTreeLines(edges, m.symbols[0].sym.ID, m.group, m.violOnly, violPkgs, m.shortPkg)
-	} else {
-		idx := m.structIdx - 1
-		if idx < 0 || idx >= len(m.structMembers) {
-			m.treeLines = nil
-			m.treeRefs = nil
-			return m
-		}
-		edges = m.structMembers[idx].Edges
-		m.treeLines, m.treeRefs = buildTreeLines(edges, 0, m.group, m.violOnly, violPkgs, m.shortPkg)
-	}
-	m.treeIdx = 0
-	return m
-}
-
-func updateTree(m Model) Model {
-	if m.result == nil || len(m.symbols) == 0 {
-		m.treeLines = nil
+// rebuildRefs recomputes pane-3 contents based on focus (symbol vs package).
+func (m Model) rebuildRefs() Model {
+	res := m.cache[m.selectedPkg]
+	sym := m.symbolFocus()
+	if sym != (graph.Symbol{}) && res != nil {
+		// Symbol focus: reference sites grouped by pkg/file/func.
+		m.refLines, m.refRefs = buildTreeLines(res.Edges, sym.ID, m.group, m.shortPkg)
+		m.refRows = nil
+		m.refIdx = clamp(m.refIdx, 0, len(m.refLines)-1)
 		return m
 	}
-	sel := m.symbols[m.listIdx]
-	violPkgs := make(map[string]bool, len(m.result.Violations))
-	for _, v := range m.result.Violations {
-		violPkgs[v.FromPkg] = true
+	// Package focus: importers list/tree.
+	var edges []graph.Edge
+	var syms []graph.Symbol
+	if res != nil {
+		edges = res.Edges
+		syms = res.Symbols
 	}
-	m.treeLines, m.treeRefs = buildTreeLines(m.result.Edges, sel.sym.ID, m.group, m.violOnly, violPkgs, m.shortPkg)
-	m.treeIdx = 0
+	if m.refExpand == nil {
+		m.refExpand = map[string]bool{}
+	}
+	if m.refTree {
+		m.refRows = buildImporterRowsTree(m.selectedPkg, m.pg, edges, m.shortPkg, m.refExpand)
+	} else {
+		m.refRows = buildImporterRowsFlat(m.selectedPkg, m.pg, edges, syms, m.shortPkg, m.refExpand)
+	}
+	m.refLines = nil
+	m.refRefs = nil
+	m.refIdx = clamp(m.refIdx, 0, len(m.refRows)-1)
 	return m
 }
 
-func (m Model) View() string {
-	if m.err != nil {
-		return styleError.Render(fmt.Sprintf("Error: %v\n\nPress q to quit.", m.err))
+// symbolFocus returns the symbol currently selected in pane 2 (for the detailed
+// reference view), or the zero Symbol when the API cursor is on a header, a
+// member, or nothing.
+// symbolFocus returns the symbol whose references pane 3 should show. This is
+// the symbol selected in pane 2, but only while detail mode is on; otherwise
+// pane 3 stays in package focus (importers). Returns the zero Symbol when the
+// API cursor is on a header or member row.
+func (m Model) symbolFocus() graph.Symbol {
+	if !m.detail {
+		return graph.Symbol{}
 	}
-
-	searchBar := m.renderSearch()
-
-	if m.loading {
-		loadLine := fmt.Sprintf("  %s Loading %s...", m.spinner.View(), strings.TrimSpace(m.input.Value()))
-		return lipgloss.JoinVertical(lipgloss.Left, searchBar, "", loadLine, "", styleHelp.Render("[ctrl+q] quit"))
+	if m.apiIdx < 0 || m.apiIdx >= len(m.apiRows) {
+		return graph.Symbol{}
 	}
-
-	helpView := m.help.View(m.keys)
-	helpH := lipgloss.Height(helpView)
-
-	dropdownH := 0
-	if m.inputMode && len(m.searchResults) > 0 {
-		dropdownH = min(len(m.searchResults), 10)
+	row := m.apiRows[m.apiIdx]
+	if row.header || row.member {
+		return graph.Symbol{}
 	}
-	contentH := m.height - 1 - helpH - dropdownH
-	if contentH < 2 {
-		contentH = 2
-	}
-
-	leftW := m.width / 3
-	if leftW < 20 {
-		leftW = 20
-	}
-	rightW := m.width - leftW
-	if rightW < 8 {
-		rightW = 8
-	}
-
-	left := m.renderList(leftW, contentH)
-	right := m.renderTree(rightW, contentH)
-	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
-	if m.showDetail {
-		body = overlayBottom(body, m.renderDetailPanel())
-	}
-
-	parts := []string{searchBar}
-	if dropdownH > 0 {
-		parts = append(parts, m.renderSearchDropdown(dropdownH))
-	}
-	parts = append(parts, body, helpView)
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+	return row.sym
 }
 
-func (m Model) renderSearchDropdown(h int) string {
-	visible := m.searchResults
-	if len(visible) > h {
-		visible = visible[:h]
+// pickerKey returns a stable expand key for the picker row at idx based on its
+// visible ancestor chain.
+func (m Model) pickerKey(idx int) string {
+	if idx < 0 || idx >= len(m.pickRows) {
+		return ""
 	}
-	w := m.width
-	lines := make([]string, 0, len(visible))
-	for i, r := range visible {
-		selected := i == m.searchSel
-		shortP := m.shortPkg(r.pkg)
-		if r.sym != "" {
-			// Symbol result: "SymName (kind)  pkg/path"
-			if selected {
-				plain := r.sym + " (" + r.kind + ")  " + shortP
-				lines = append(lines, styleSelected.Width(w).Render("▶ "+truncate(plain, w-4)))
-			} else {
-				label := styleActive.Render(r.sym) + styleDim.Render(" ("+r.kind+")  "+shortP)
-				lines = append(lines, "  "+label)
-			}
-		} else {
-			// Package result: "prefix/lastSeg" — last segment highlighted, prefix dimmed
-			if selected {
-				lines = append(lines, styleSelected.Width(w).Render("▶ "+truncate(shortP, w-4)))
-			} else {
-				var label string
-				if idx := strings.LastIndex(shortP, "/"); idx >= 0 {
-					label = styleDim.Render(shortP[:idx+1]) + shortP[idx+1:]
-				} else {
-					label = shortP
-				}
-				lines = append(lines, "  "+label)
+	row := m.pickRows[idx]
+	switch m.pickMode {
+	case pickerFolder:
+		// Reconstruct the slash path from the visible ancestor chain.
+		segs := []string{row.label}
+		depth := row.depth
+		for i := idx - 1; i >= 0 && depth > 0; i-- {
+			if m.pickRows[i].depth == depth-1 {
+				segs = append([]string{m.pickRows[i].label}, segs...)
+				depth--
 			}
 		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-func (m Model) renderSearch() string {
-	prefix := "  "
-	if m.inputMode {
-		prefix = styleActive.Render("/") + " "
-		return prefix + m.input.View()
-	}
-	if m.result != nil {
-		return prefix + styleDim.Render(m.result.Target) + styleHelp.Render("  / to search")
-	}
-	return prefix + styleHelp.Render("Press / to search")
-}
-
-func (m Model) renderList(w, h int) string {
-	if m.view == viewStruct {
-		return m.renderStructList(w, h)
-	}
-	title := "Symbols"
-	if m.active == paneList {
-		title = styleActiveTitle.Render(title)
-	} else {
-		title = styleTitle.Render(title)
-	}
-
-	lines := make([]string, 0, len(m.symbols))
-	for i, s := range m.symbols {
-		pkgSeg := s.sym.Package
-		if j := strings.LastIndex(pkgSeg, "/"); j >= 0 {
-			pkgSeg = pkgSeg[j+1:]
+		return strings.Join(segs, "/")
+	case pickerImport:
+		// Reconstruct the \x00-joined path chain.
+		parts := []string{row.pkgPath}
+		depth := row.depth
+		for i := idx - 1; i >= 0 && depth > 0; i-- {
+			if m.pickRows[i].depth == depth-1 {
+				parts = append([]string{m.pickRows[i].pkgPath}, parts...)
+				depth--
+			}
 		}
-		label := fmt.Sprintf("%s.%s (%s) [%d]", pkgSeg, s.sym.Name, s.sym.Kind, s.refCount)
-		label = truncate(label, w-1)
-		switch {
-		case i == m.listIdx && m.active == paneList:
-			lines = append(lines, styleSelected.Width(w).Render(label))
-		case i == m.listIdx:
-			lines = append(lines, styleCurrent.Render(padRight(label, w)))
+		return strings.Join(parts, "\x00")
+	}
+	return row.pkgPath
+}
+
+// toggleRefRow flips the expand state for the importer-tree row at idx.
+func (m *Model) toggleRefRow(idx int) {
+	if m.refExpand == nil {
+		m.refExpand = map[string]bool{}
+	}
+	if idx < 0 || idx >= len(m.refRows) {
+		return
+	}
+	row := m.refRows[idx]
+	parts := []string{row.pkgPath}
+	depth := row.depth
+	for i := idx - 1; i >= 0 && depth > 0; i-- {
+		if m.refRows[i].depth == depth-1 {
+			parts = append([]string{m.refRows[i].pkgPath}, parts...)
+			depth--
+		}
+	}
+	key := strings.Join(parts, "\x00")
+	m.refExpand[key] = !m.refExpand[key]
+}
+
+// absPath resolves a working-directory-relative file path to an absolute path so
+// external tools (the editor) can open it regardless of their own cwd.
+func (m Model) absPath(file string) string {
+	if file == "" || filepath.IsAbs(file) {
+		return file
+	}
+	base := m.cfg.Loader.Dir
+	if base == "" {
+		base = "."
+	}
+	if abs, err := filepath.Abs(base); err == nil {
+		return filepath.Join(abs, file)
+	}
+	return filepath.Join(base, file)
+}
+
+// copyToClipboard pipes text to the platform clipboard utility. Failures are
+// silent — the flash already optimistically reports success.
+func copyToClipboard(text string) tea.Cmd {
+	return func() tea.Msg {
+		var name string
+		var args []string
+		switch runtime.GOOS {
+		case "darwin":
+			name = "pbcopy"
+		case "windows":
+			name = "clip"
 		default:
-			lines = append(lines, styleItem.Render(padRight(label, w)))
-		}
-	}
-	m.listVP.Width = w
-	m.listVP.Height = h - 1
-	m.listVP.SetContent(strings.Join(lines, "\n"))
-	ensureVisible(&m.listVP, m.listIdx)
-	return lipgloss.JoinVertical(lipgloss.Left, padRight(title, w), m.listVP.View())
-}
-
-func (m Model) renderStructList(w, h int) string {
-	title := m.structName
-	if m.active == paneList {
-		title = styleActiveTitle.Render(title)
-	} else {
-		title = styleTitle.Render(title)
-	}
-	if m.structMembers == nil {
-		return lipgloss.JoinVertical(lipgloss.Left, padRight(title, w), styleHelp.Render("  loading..."))
-	}
-
-	labels := make([]string, len(m.structMembers))
-	for i, mem := range m.structMembers {
-		kind := styleDim.Render(" (" + mem.Kind + ")")
-		var body string
-		switch mem.Kind {
-		case "method":
-			body = mem.Name + styleDim.Render(mem.Signature)
-		case "field":
-			body = mem.Name + styleDim.Render(":"+mem.Type)
-		default:
-			body = mem.Name
-		}
-		refN := ""
-		if n := len(mem.Edges); n > 0 {
-			refN = styleDim.Render(fmt.Sprintf(" [%d]", n))
-		}
-		labels[i] = body + kind + refN
-	}
-
-	// Root (whole-struct) row label: shows total ref count.
-	rootRefs := 0
-	if m.result != nil {
-		rootRefs = len(m.result.Edges)
-	}
-	rootLabel := m.structName + styleDim.Render(fmt.Sprintf(" [%d]", rootRefs))
-	active := m.active == paneList
-	if m.structIdx == 0 && active {
-		rootLabel = styleSelected.Render(rootLabel)
-	} else if m.structIdx == 0 {
-		rootLabel = lipgloss.NewStyle().Bold(true).Render(rootLabel)
-	}
-
-	// Selected member index in the tree.Child list (structIdx 1..N → 0..N-1).
-	selChild := m.structIdx - 1
-	t := tree.New().Root(rootLabel).Enumerator(tree.RoundedEnumerator)
-	for _, lbl := range labels {
-		t.Child(lbl)
-	}
-	t.ItemStyleFunc(func(_ tree.Children, i int) lipgloss.Style {
-		if i == selChild && active {
-			return lipgloss.NewStyle().Background(lipgloss.Color("63")).Foreground(lipgloss.Color("230"))
-		}
-		if i == selChild {
-			return lipgloss.NewStyle().Bold(true)
-		}
-		return lipgloss.NewStyle()
-	})
-
-	content := t.String()
-	m.listVP.Width = w
-	m.listVP.Height = h - 1
-	m.listVP.SetContent(content)
-	ensureVisible(&m.listVP, m.structIdx)
-	return lipgloss.JoinVertical(lipgloss.Left, padRight(title, w), m.listVP.View())
-}
-
-func (m Model) renderTree(w, h int) string {
-	groupName := "pkg"
-	switch m.group {
-	case GroupFile:
-		groupName = "file"
-	case GroupFunc:
-		groupName = "func"
-	}
-	titleStr := fmt.Sprintf("References [group=%s]", groupName)
-	if m.active == paneTree {
-		titleStr = styleActiveTitle.Render(titleStr)
-	} else {
-		titleStr = styleTitle.Render(titleStr)
-	}
-
-	lines := make([]string, len(m.treeLines))
-	for i, line := range m.treeLines {
-		line = truncate(line, w-1)
-		if i == m.treeIdx && m.active == paneTree {
-			lines[i] = styleSelected.Width(w).Render(line)
-		} else {
-			lines[i] = line
-		}
-	}
-	m.treeVP.Width = w
-	m.treeVP.Height = h - 1
-	m.treeVP.SetContent(strings.Join(lines, "\n"))
-	ensureVisible(&m.treeVP, m.treeIdx)
-	return lipgloss.JoinVertical(lipgloss.Left, padRight(titleStr, w), m.treeVP.View())
-}
-
-func (m Model) renderDetailPanel() string {
-	w := m.width
-	sep := styleTitle.Render(strings.Repeat("─", w))
-
-	if m.result == nil || len(m.symbols) == 0 {
-		return lipgloss.JoinVertical(lipgloss.Left, sep, styleHelp.Render("  no symbol selected"))
-	}
-
-	sel := m.symbols[m.listIdx]
-	s := sel.sym
-
-	wrap := lipgloss.NewStyle().Width(w - 2)
-	nameLine := wrap.Render(fmt.Sprintf("  %s %s",
-		styleActive.Render(s.Package+"."+s.Name),
-		styleDim.Render("("+s.Kind+")"),
-	))
-	locLine := wrap.Render(fmt.Sprintf("  %s  refs:%d",
-		styleDim.Render(fmt.Sprintf("%s:%d", s.File, s.Line)),
-		sel.refCount,
-	))
-
-	cols := []string{nameLine, locLine}
-
-	if len(m.result.Violations) > 0 {
-		var b strings.Builder
-		b.WriteString(styleViolation.Render(fmt.Sprintf("  violations (%d): ", len(m.result.Violations))))
-		for i, v := range m.result.Violations {
-			if i >= 3 {
-				b.WriteString(styleDim.Render(fmt.Sprintf("(+%d more)", len(m.result.Violations)-3)))
-				break
+			if _, err := exec.LookPath("wl-copy"); err == nil {
+				name = "wl-copy"
+			} else {
+				name, args = "xclip", []string{"-selection", "clipboard"}
 			}
-			b.WriteString(styleViolation.Render(v.FromPkg))
-			b.WriteString(styleDim.Render(" " + v.Rule.Reason + "  "))
 		}
-		cols = append(cols, wrap.Render(b.String()))
+		c := exec.Command(name, args...)
+		c.Stdin = strings.NewReader(text)
+		_ = c.Run()
+		return nil
 	}
-
-	return lipgloss.JoinVertical(lipgloss.Left, append([]string{sep}, cols...)...)
 }
 
 // currentRef returns the file and line for the focused element.
 func (m Model) currentRef() (file string, line int) {
 	switch m.active {
-	case paneTree:
-		if m.treeIdx < len(m.treeRefs) {
-			r := m.treeRefs[m.treeIdx]
-			return r.file, r.line
+	case paneAPI:
+		if m.apiIdx < len(m.apiRows) {
+			return m.apiRows[m.apiIdx].file, m.apiRows[m.apiIdx].line
 		}
-	case paneList:
-		if m.view == viewStruct {
-			if m.structIdx == 0 {
-				if len(m.symbols) > 0 {
-					s := m.symbols[0].sym
-					return s.File, s.Line
-				}
-				return "", 0
-			}
-			idx := m.structIdx - 1
-			if idx >= 0 && idx < len(m.structMembers) {
-				mem := m.structMembers[idx]
-				return mem.File, mem.Line
+	case paneRefs:
+		if m.symbolFocus() != (graph.Symbol{}) {
+			if m.refIdx < len(m.refRefs) {
+				return m.refRefs[m.refIdx].file, m.refRefs[m.refIdx].line
 			}
 			return "", 0
 		}
-		if m.listIdx < len(m.symbols) {
-			s := m.symbols[m.listIdx].sym
-			return s.File, s.Line
+		// Package focus: an expanded importer's reference-site row.
+		if m.refIdx < len(m.refRows) && m.refRows[m.refIdx].ref {
+			return m.refRows[m.refIdx].file, m.refRows[m.refIdx].line
 		}
 	}
 	return "", 0
 }
 
-// shortPkg strips the main module prefix from a package path so only the
-// intra-module portion is shown (e.g. "go.flaticols.dev/gorefactor/internal/graph"
-// → "internal/graph"). Packages outside the module are returned unchanged.
+// shortPkg strips the main module prefix from a package path.
 func (m Model) shortPkg(p string) string {
 	if m.modulePrefix == "" || p == "" {
 		return p
@@ -867,7 +827,53 @@ func (m Model) shortPkg(p string) string {
 	return p
 }
 
-// ensureVisible scrolls vp so that line `idx` (zero-based in the content) is within view.
+// nextSelectable returns the next API-row index in the given direction (delta
+// +1/-1) that is not a kind header, staying put if there is no such row ahead.
+func nextSelectable(rows []apiRow, idx, delta int) int {
+	if len(rows) == 0 {
+		return 0
+	}
+	for next := idx + delta; next >= 0 && next < len(rows); next += delta {
+		if !rows[next].header {
+			return next
+		}
+	}
+	return idx
+}
+
+// firstSelectable returns the first non-header API row index, or 0.
+func firstSelectable(rows []apiRow) int {
+	for i, r := range rows {
+		if !r.header {
+			return i
+		}
+	}
+	return 0
+}
+
+func clamp(v, lo, hi int) int {
+	if hi < lo {
+		return lo
+	}
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// suffixMatchPath returns the first path ending with "/"+suffix or equal to suffix.
+func suffixMatchPath(suffix string, paths []string) string {
+	for _, p := range paths {
+		if p == suffix || strings.HasSuffix(p, "/"+suffix) {
+			return p
+		}
+	}
+	return ""
+}
+
 func ensureVisible(vp *viewport.Model, idx int) {
 	if vp.Height <= 0 {
 		return
@@ -881,20 +887,6 @@ func ensureVisible(vp *viewport.Model, idx int) {
 		vp.YOffset = 0
 	}
 }
-
-// overlayBottom renders panel on top of the last lines of base.
-func overlayBottom(base, panel string) string {
-	bLines := strings.Split(base, "\n")
-	pLines := strings.Split(panel, "\n")
-	if len(pLines) >= len(bLines) {
-		return panel
-	}
-	out := make([]string, len(bLines))
-	copy(out, bLines)
-	copy(out[len(bLines)-len(pLines):], pLines)
-	return strings.Join(out, "\n")
-}
-
 
 func truncate(s string, max int) string {
 	if max <= 3 || len(s) <= max {

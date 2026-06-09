@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>gorefact — Go call-graph explorer</title>
-<meta name="description" content="gorefact is a Go call-graph and dependency explorer. Show reference trees for any package or symbol and enforce architectural rules via TOML.">
+<title>gorefact — Go import &amp; reference explorer</title>
+<meta name="description" content="gorefact is a package-centric explorer for Go import and reference graphs. Browse a module's packages, inspect a package's public API, and see exactly who depends on it.">
 <meta name="color-scheme" content="dark">
 <style>
   :root {
@@ -401,7 +401,7 @@
     <div class="nav-links">
       <a href="#features">Features</a>
       <a href="#install">Install</a>
-      <a href="#rules">Rules</a>
+      <a href="#usage">Usage</a>
       <a class="btn" href="https://github.com/flaticols/gorefactor">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.6-.3-5.3-1.3-5.3-5.8 0-1.3.5-2.3 1.2-3.2-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2 1-.3 2-.4 3-.4s2 .1 3 .4C17.3 4.6 18.3 5 18.3 5c.7 1.6.2 2.8.1 3.1.8.9 1.2 1.9 1.2 3.2 0 4.5-2.7 5.5-5.3 5.8.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5Z"/></svg>
         GitHub
@@ -414,12 +414,12 @@
 
 <header class="hero">
   <div class="wrap">
-    <span class="eyebrow"><span class="pulse"></span> Go · Static analysis · TOML rules</span>
-    <h1>See every caller.<br><span class="grad">Enforce every rule.</span></h1>
+    <span class="eyebrow"><span class="pulse"></span> Go · Imports · References</span>
+    <h1>Browse every package.<br><span class="grad">See who depends on it.</span></h1>
     <p class="lede">
-      <strong>gorefact</strong> is a Go call-graph and dependency explorer. Show
-      full reference trees for any package or symbol, and enforce architectural
-      rules defined in a simple TOML file.
+      <strong>gorefact</strong> is a package-centric explorer for Go import and
+      reference graphs. Browse a module's packages, inspect a package's public
+      API, and see exactly who depends on it — built for planning refactors.
     </p>
     <div class="cta">
       <a class="btn primary" href="#install">
@@ -436,17 +436,21 @@
         <span class="term-dot r"></span>
         <span class="term-dot y"></span>
         <span class="term-dot g"></span>
-        <span class="term-title">~/my-service — gorefact check</span>
+        <span class="term-title">~/my-service — gorefact internal/loader</span>
       </div>
-      <pre class="term-body"><span class="prompt">$</span> <span class="cmd">gorefact check</span> <span class="flag">--rules</span> <span class="str">gorefact.rules.toml</span> ./...
-<span class="out">analyzed <span class="ok">142</span> packages · <span class="ok">3821</span> edges in <span class="ok">0.8s</span></span>
+      <pre class="term-body"><span class="prompt">$</span> <span class="cmd">gorefact</span> internal/loader <span class="flag">--format</span> <span class="str">text</span>
+<span class="out">package <span class="ok">internal/loader</span> · <span class="ok">4</span> exported · <span class="ok">6</span> importers</span>
 
-<span class="bad">✗</span> <span class="cmd">tasks/engine.go:84</span>  <span class="dim">→</span>  <span class="cmd">adapters/postgres</span>
-    <span class="dim">rule:</span> tasks must not depend on adapters
-<span class="bad">✗</span> <span class="cmd">api/handler.go:33</span>   <span class="dim">→</span>  <span class="cmd">repository/users</span>
-    <span class="dim">rule:</span> handlers must go through service layer
+<span class="dim">public API</span>
+  <span class="cmd">func</span> Load(dir string) (*Module, error)
+  <span class="cmd">type</span> Module <span class="dim">struct</span>
+      <span class="dim">+</span> Packages []*Package
+      <span class="dim">+</span> (m *Module) Find(path string) *Package
 
-<span class="out"><span class="bad">2 violations</span> · exit 1</span></pre>
+<span class="dim">imported by</span>
+  <span class="ok">internal/graph</span>   <span class="dim">graph.go:31</span>   <span class="dim">→</span> loader.Load
+  <span class="ok">internal/rules</span>   <span class="dim">walk.go:18</span>    <span class="dim">→</span> loader.Module.Find
+  <span class="ok">cmd/gorefact</span>     <span class="dim">main.go:52</span>    <span class="dim">→</span> loader.Load</pre>
     </div>
   </div>
 </header>
@@ -454,28 +458,28 @@
 <section id="features">
   <div class="wrap">
     <p class="eyebrow-sm">What it does</p>
-    <h2>One binary. Three jobs.</h2>
+    <h2>Imports in. References out.</h2>
     <p class="section-lede">
-      An explorer for reference trees, a linter for your architecture, and a
-      long-lived server for editor integrations.
+      Browse a module's packages, read off a package's public API, and trace
+      exactly who depends on it — down to individual reference sites.
     </p>
 
     <div class="cards">
       <div class="card">
-        <h3>gorefact inspect</h3>
-        <p>Interactive TUI or structured output showing full reference trees for any package or symbol.</p>
+        <h3>Package picker</h3>
+        <p>Browse a module's packages as a flat list, a folder tree nested by path segment, or an import tree nested by dependency edge.</p>
       </div>
       <div class="card">
-        <h3>gorefact check</h3>
-        <p>Batch dependency violation check against TOML <code>[[deny]]</code> rules.</p>
+        <h3>Public API view</h3>
+        <p>A package's exported <code>const</code>, <code>var</code>, <code>func</code>, and types — structs and interfaces expand inline into their exported methods and fields.</p>
       </div>
       <div class="card">
-        <h3>gorefact serve</h3>
-        <p>Long-lived JSON-RPC server consumed by the first-party Neovim plugin.</p>
+        <h3>Importers &amp; usage</h3>
+        <p>See who imports a package, flat or as a tree, then drill into <code>CallerPkg.CallerFunc → Symbol</code> reference sites with <code>file:line</code>.</p>
       </div>
       <div class="card">
         <h3>Pick your format</h3>
-        <p>Text, JSON, Markdown, or Vim quickfix — pipe into <code>jq</code>, <code>less</code>, or your editor.</p>
+        <p>Interactive TUI on a terminal, or structured text, JSON, and Markdown reports — pipe into <code>jq</code>, <code>less</code>, or your editor.</p>
       </div>
     </div>
   </div>
@@ -511,7 +515,7 @@
 <pre><span class="k">go</span> install go.flaticols.dev/gorefactor/cmd/gorefact@latest</pre>
         <h4>Or pin it per-module as a Go tool dependency <span style="color:var(--fg-muted)">(Go 1.24+)</span>:</h4>
 <pre><span class="k">go</span> get -tool go.flaticols.dev/gorefactor/cmd/gorefact@latest
-<span class="k">go</span> tool gorefact inspect ./...</pre>
+<span class="k">go</span> tool gorefact ./...</pre>
       </div>
 
       <div class="tab-panel nix">
@@ -533,40 +537,39 @@
   </div>
 </section>
 
-<section id="rules">
+<section id="usage">
   <div class="wrap">
-    <p class="eyebrow-sm">Rules</p>
-    <h2>Describe your architecture in TOML</h2>
+    <p class="eyebrow-sm">Usage</p>
+    <h2>Explore on a TTY, or pipe a report</h2>
     <p class="section-lede">
-      A <code>gorefact.rules.toml</code> at the repo root is all you need.
-      Rules match against the short package name — no regex, no AST.
+      Run <code>gorefact</code> bare to open the explorer, or target a package
+      and pass <code>--format</code> for a structured report. Module-only by
+      default, with <code>--filter-pkg</code> scoping for large repos.
     </p>
 
     <div class="split">
       <div>
-        <h4>gorefact.rules.toml</h4>
-<pre>[[<span class="k">deny</span>]]
-from   = <span class="s">"tasks"</span>
-to     = <span class="s">"adapters"</span>
-reason = <span class="s">"tasks must not depend on adapters"</span>
+        <h4>Run it</h4>
+<pre><span class="c"># open the explorer on a TTY</span>
+<span class="k">gorefact</span>
 
-[[<span class="k">deny</span>]]
-from   = <span class="s">"handler"</span>
-to     = <span class="s">"repository"</span>
-reason = <span class="s">"handlers must go through service layer"</span></pre>
+<span class="c"># focus the explorer on a package</span>
+<span class="k">gorefact</span> github.com/acme/tasks
+
+<span class="c"># structured report (non-TTY, or force with --format)</span>
+<span class="k">gorefact</span> internal/loader --format json | jq .
+<span class="k">gorefact</span> internal/loader --format md</pre>
       </div>
       <div>
-        <h4>Run it</h4>
-<pre><span class="c"># validate the rules file itself</span>
-<span class="k">gorefact</span> validate-rules \
-  --rules gorefact.rules.toml
-
-<span class="c"># check the whole module</span>
-<span class="k">gorefact</span> check \
-  --rules gorefact.rules.toml ./...
-
-<span class="c"># editor-friendly quickfix</span>
-<span class="k">gorefact</span> check --format qf ./...</pre>
+        <h4>TUI keys</h4>
+<pre><span class="k">t</span>      <span class="c"># cycle picker: flat / folder / import tree</span>
+<span class="k">g</span>      <span class="c"># cycle importers: grouped tree / flat</span>
+<span class="k">m</span>      <span class="c"># toggle module-only / include externals</span>
+<span class="k">enter</span>  <span class="c"># select package / expand struct or node</span>
+<span class="k">/</span>      <span class="c"># fuzzy-search the picker</span>
+<span class="k">e</span>      <span class="c"># open symbol or ref site in $EDITOR</span>
+<span class="k">?</span>      <span class="c"># toggle help</span>
+<span class="k">q</span>      <span class="c"># quit (or ctrl+c)</span></pre>
       </div>
     </div>
   </div>

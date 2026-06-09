@@ -310,4 +310,3 @@ func classifyRef(obj types.Object) graph.EdgeKind {
 	}
 	return graph.EdgeRead
 }
-

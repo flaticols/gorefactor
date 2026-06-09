@@ -1,21 +1,22 @@
 # gorefact
 
-**Go call-graph explorer with dependency rule checks.**
+**Package-centric explorer for Go import and reference graphs.**
 
-`gorefact` shows you everything that imports or references a package, type,
-function, const, or var — and checks architectural rules defined in a TOML
-file.
+`gorefact` lets you browse a module's packages, inspect a package's public API,
+and see exactly who depends on it — built for planning refactors.
 
 ## What it does
 
-- **`gorefact inspect`** — interactive TUI or structured output showing full
-  reference trees for any package or symbol.
-- **`gorefact check`** — batch dependency violation check against TOML
-  `[[deny]]` rules.
-- **`gorefact serve`** — long-lived JSON-RPC server consumed by the Neovim
-  plugin.
-- Output formats: **text**, **JSON**, **markdown**, **quickfix**.
-- Optional `--filter-pkg` scoping for large repositories.
+- **Browse packages** — flat list, folder tree, or import tree.
+- **Public API** — exported `const`, `var`, `func`, and types; structs and
+  interfaces expand inline into their exported methods and fields.
+- **Importers** — who imports the selected package, flat or as a tree.
+- **Symbol-level usage** — `CallerPkg.CallerFunc → Symbol` reference sites with
+  `file:line`.
+- Interactive TUI on a terminal, or structured **text**, **JSON**, **markdown**
+  output for pipelines.
+- Module-only by default, with a toggle for external packages; optional
+  `--filter-pkg` scoping for large repositories.
 
 ## Install
 
@@ -38,7 +39,7 @@ Or pin it per-module as a Go tool dependency (Go 1.24+):
 
 ```bash
 go get -tool go.flaticols.dev/gorefactor/cmd/gorefact@latest
-go tool gorefact inspect ./...
+go tool gorefact ./...
 ```
 
 ### Nix
@@ -60,7 +61,5 @@ Tagged releases publish `tar.gz` archives for macOS (`amd64`, `arm64`) on the
 
 ## Next steps
 
-- [Inspect a package or symbol](../README.md#inspect)
-- [Check dependency rules](../README.md#check)
-- [Write rule files](../README.md#rules)
-- [Neovim plugin](../README.md#neovim-plugin)
+- [Usage and flags](../README.md#usage)
+- [TUI keybindings](../README.md#tui-keybindings)

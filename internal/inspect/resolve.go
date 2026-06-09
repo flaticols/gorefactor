@@ -7,7 +7,6 @@ import (
 
 	"go.flaticols.dev/gorefactor/internal/graph"
 	"go.flaticols.dev/gorefactor/internal/loader"
-	"go.flaticols.dev/gorefactor/internal/rules"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -19,44 +18,50 @@ type InspectResult struct {
 	Symbols    []graph.Symbol
 	Edges      []graph.Edge
 	PkgGraph   *loader.PackageGraph
-	Violations []PackageViolation
-}
-
-// PackageViolation records a deny-rule hit at the package-import level.
-type PackageViolation struct {
-	FromPkg string
-	ToPkg   string
-	Rule    rules.Rule
 }
 
 // Config configures the inspect resolver.
 type Config struct {
 	Loader loader.Config
-	Rules  []rules.Rule
+}
+
+// BuildGraph runs a T1 load and returns the resulting package graph. The TUI
+// builds this once at startup and threads it into ResolveTargetWithGraph and
+// LoadStructMembersWithGraph to avoid rebuilding the graph on every selection.
+func BuildGraph(cfg Config) (*loader.PackageGraph, error) {
+	if cfg.Loader.Progress != nil {
+		cfg.Loader.Progress("loading package graph")
+	}
+	return loader.BuildPackageGraph(cfg.Loader)
 }
 
 // ResolveTarget parses target, loads T1+T2 data, and returns an InspectResult.
 // target may be a package path, "pkg.Symbol", or "pkg.Receiver.Method".
 // If target contains no "/" it is treated as a suffix and matched against all
 // known packages (e.g. "graph" matches "go.flaticols.dev/gorefactor/internal/graph").
+//
+// It builds the package graph once and delegates to ResolveTargetWithGraph.
 func ResolveTarget(target string, cfg Config) (*InspectResult, error) {
-	target = strings.TrimSpace(target)
-	pkgPath, symbolName, _ := ParseTarget(target) // method-level filtering not yet implemented
-
-	if cfg.Loader.Progress != nil {
-		cfg.Loader.Progress("loading package graph")
-	}
-	pg, err := loader.BuildPackageGraph(cfg.Loader)
+	pg, err := BuildGraph(cfg)
 	if err != nil {
 		return nil, err
 	}
+	return ResolveTargetWithGraph(target, cfg, pg)
+}
 
-	// Suffix match: if pkgPath has no "/" resolve it to the first package whose
-	// path ends with "/"+pkgPath or equals pkgPath exactly.
-	if !strings.Contains(pkgPath, "/") {
-		if resolved := suffixMatch(pkgPath, pg.AllPaths()); resolved != "" {
-			pkgPath = resolved
-		}
+// ResolveTargetWithGraph is like ResolveTarget but reuses an already-built
+// package graph instead of rebuilding it. Callers that resolve many targets
+// (e.g. an interactive browser) should build the graph once via BuildGraph and
+// pass it here to avoid repeated T1 loads.
+func ResolveTargetWithGraph(target string, cfg Config, pg *loader.PackageGraph) (*InspectResult, error) {
+	target = strings.TrimSpace(target)
+	pkgPath, symbolName, _ := ParseTarget(target) // method-level filtering not yet implemented
+
+	// Resolve to a known package. If pkgPath is not an exact graph node (e.g. a
+	// bare suffix "loader" or a partial path "internal/loader"), match it against
+	// the first package whose path ends with "/"+pkgPath or equals pkgPath.
+	if resolved := ResolvePackagePath(pg, pkgPath); resolved != "" {
+		pkgPath = resolved
 	}
 
 	importers := pg.ImportersOf(pkgPath)
@@ -99,17 +104,6 @@ func ResolveTarget(target string, cfg Config) (*InspectResult, error) {
 		edges = filtEdges
 	}
 
-	var viols []PackageViolation
-	for _, imp := range importers {
-		if r := rules.CheckPackageImport(imp.Path, pkgPath, cfg.Rules); r != nil {
-			viols = append(viols, PackageViolation{
-				FromPkg: imp.Path,
-				ToPkg:   pkgPath,
-				Rule:    *r,
-			})
-		}
-	}
-
 	return &InspectResult{
 		Target:     target,
 		PkgPath:    pkgPath,
@@ -117,8 +111,21 @@ func ResolveTarget(target string, cfg Config) (*InspectResult, error) {
 		Symbols:    syms,
 		Edges:      edges,
 		PkgGraph:   pg,
-		Violations: viols,
 	}, nil
+}
+
+// ResolvePackagePath resolves target to a known package path in pg: an exact
+// node match wins, otherwise the first package whose path ends with "/"+target
+// or equals target (so bare suffixes like "loader" and partial paths like
+// "internal/loader" resolve). Returns "" when nothing matches.
+func ResolvePackagePath(pg *loader.PackageGraph, target string) string {
+	if pg == nil || target == "" {
+		return ""
+	}
+	if _, ok := pg.Nodes[target]; ok {
+		return target
+	}
+	return suffixMatch(target, pg.AllPaths())
 }
 
 // ListPackages returns all package paths in the workspace and the main module path.
@@ -143,7 +150,23 @@ type StructMember struct {
 
 // LoadStructMembers returns the exported methods and (for struct types) fields
 // of the named type pkgPath.typeName. Returns nil if the type is not found.
+//
+// It builds the package graph once (to attach member references) and delegates
+// to LoadStructMembersWithGraph.
 func LoadStructMembers(cfg Config, pkgPath, typeName string) ([]StructMember, error) {
+	pg, err := loader.BuildPackageGraph(cfg.Loader)
+	if err != nil {
+		// Member positions/signatures don't need the graph; only the reference
+		// edges do. Fall back to a nil graph so callers still get members.
+		pg = nil
+	}
+	return LoadStructMembersWithGraph(cfg, pg, pkgPath, typeName)
+}
+
+// LoadStructMembersWithGraph is like LoadStructMembers but reuses an
+// already-built package graph instead of rebuilding it. A nil graph skips the
+// reference-edge collection (members are still returned).
+func LoadStructMembersWithGraph(cfg Config, pg *loader.PackageGraph, pkgPath, typeName string) ([]StructMember, error) {
 	pkgs, err := packages.Load(&packages.Config{
 		Mode:  packages.NeedName | packages.NeedTypes | packages.NeedSyntax,
 		Dir:   cfg.Loader.Dir,
@@ -208,7 +231,7 @@ func LoadStructMembers(cfg Config, pkgPath, typeName string) ([]StructMember, er
 
 	// Collect references to each member across importer packages and the
 	// target package itself (so intra-package refs are included) and attach.
-	if pg, perr := loader.BuildPackageGraph(cfg.Loader); perr == nil {
+	if pg != nil {
 		importers := pg.ImportersOf(pkgPath)
 		paths := make([]string, 0, len(importers)+1)
 		for _, n := range importers {

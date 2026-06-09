@@ -12,50 +12,46 @@ func TestBuildTreeLines_GroupPkg(t *testing.T) {
 		{Callee: 100, Kind: graph.EdgeCall, CallerPkg: "example.com/handler", File: "handler/h.go", Line: 42},
 		{Callee: 100, Kind: graph.EdgeTypeRef, CallerPkg: "example.com/service", File: "service/s.go", Line: 10},
 	}
-	violPkgs := map[string]bool{"example.com/handler": true}
 
-	lines, _ := buildTreeLines(edges, 100, GroupPkg, false, violPkgs, nil)
-
-	if len(lines) == 0 {
-		t.Fatal("expected lines, got none")
+	lines, refs := buildTreeLines(edges, 100, GroupPkg, nil)
+	if len(lines) != len(refs) {
+		t.Fatalf("lines (%d) and refs (%d) length mismatch", len(lines), len(refs))
 	}
-	foundViol := false
-	foundClean := false
-	for _, l := range lines {
-		if strings.Contains(l, "handler") && strings.Contains(l, "✗") {
-			foundViol = true
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "handler") || !strings.Contains(joined, "service") {
+		t.Errorf("expected both caller packages in output, got:\n%s", joined)
+	}
+	// A reference child row carries a non-zero treeRef.
+	hasRef := false
+	for _, r := range refs {
+		if r.file != "" && r.line > 0 {
+			hasRef = true
 		}
-		if strings.Contains(l, "service") && strings.Contains(l, "✓") {
-			foundClean = true
-		}
 	}
-	if !foundViol {
-		t.Errorf("expected ✗ marker for handler, lines: %v", lines)
-	}
-	if !foundClean {
-		t.Errorf("expected ✓ marker for service, lines: %v", lines)
+	if !hasRef {
+		t.Error("expected at least one reference row with file/line")
 	}
 }
 
-func TestBuildTreeLines_ViolOnly(t *testing.T) {
+func TestBuildTreeLines_FiltersBySymbol(t *testing.T) {
 	edges := []graph.Edge{
-		{Callee: 100, CallerPkg: "example.com/handler", File: "handler/h.go", Line: 10},
-		{Callee: 100, CallerPkg: "example.com/service", File: "service/s.go", Line: 20},
+		{Callee: 100, CallerPkg: "example.com/a", File: "a/a.go", Line: 1},
+		{Callee: 200, CallerPkg: "example.com/b", File: "b/b.go", Line: 2},
 	}
-	violPkgs := map[string]bool{"example.com/handler": true}
-
-	lines, _ := buildTreeLines(edges, 100, GroupPkg, true, violPkgs, nil)
-	for _, l := range lines {
-		if strings.Contains(l, "service") {
-			t.Errorf("violOnly=true should hide clean package, but got: %q", l)
-		}
+	lines, _ := buildTreeLines(edges, 100, GroupPkg, nil)
+	joined := strings.Join(lines, "\n")
+	if strings.Contains(joined, "example.com/b") {
+		t.Errorf("symbol 100 result should not include edges to symbol 200:\n%s", joined)
 	}
 }
 
 func TestBuildTreeLines_NoEdges(t *testing.T) {
-	lines, _ := buildTreeLines(nil, 100, GroupPkg, false, nil, nil)
-	if len(lines) == 0 {
-		t.Fatal("expected at least one line (empty message), got none")
+	lines, refs := buildTreeLines(nil, 100, GroupPkg, nil)
+	if len(lines) != 1 || !strings.Contains(lines[0], "no references") {
+		t.Fatalf("expected a single (no references) line, got: %v", lines)
+	}
+	if len(refs) != len(lines) {
+		t.Fatalf("refs length must match lines")
 	}
 }
 
@@ -64,10 +60,7 @@ func TestBuildTreeLines_GroupFile(t *testing.T) {
 		{Callee: 100, CallerPkg: "example.com/handler", File: "handler/h.go", Line: 42},
 		{Callee: 100, CallerPkg: "example.com/handler", File: "handler/h.go", Line: 55},
 	}
-	violPkgs := map[string]bool{}
-
-	lines, _ := buildTreeLines(edges, 100, GroupFile, false, violPkgs, nil)
-	// Both edges are in the same file — should appear under one group header.
+	lines, _ := buildTreeLines(edges, 100, GroupFile, nil)
 	fileHeaders := 0
 	for _, l := range lines {
 		if strings.Contains(l, "handler/h.go") && !strings.Contains(l, ":42") && !strings.Contains(l, ":55") {
@@ -76,5 +69,22 @@ func TestBuildTreeLines_GroupFile(t *testing.T) {
 	}
 	if fileHeaders != 1 {
 		t.Errorf("expected 1 file header for handler/h.go, got %d; lines: %v", fileHeaders, lines)
+	}
+}
+
+func TestBuildTreeLines_GroupFunc(t *testing.T) {
+	edges := []graph.Edge{
+		{Callee: 100, CallerPkg: "example.com/handler", CallerFunc: "Serve", File: "handler/h.go", Line: 42},
+		{Callee: 100, CallerPkg: "example.com/handler", CallerFunc: "Serve", File: "handler/h.go", Line: 55},
+	}
+	lines, _ := buildTreeLines(edges, 100, GroupFunc, nil)
+	headers := 0
+	for _, l := range lines {
+		if strings.Contains(l, "Serve") && strings.Contains(l, "refs") {
+			headers++
+		}
+	}
+	if headers != 1 {
+		t.Errorf("expected 1 func header for Serve, got %d; lines: %v", headers, lines)
 	}
 }
